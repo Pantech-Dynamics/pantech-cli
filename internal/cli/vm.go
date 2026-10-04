@@ -77,10 +77,11 @@ func newVMListCmd(a *app) *cobra.Command {
 			rows := make([][]string, len(vms))
 			counts := map[string]int{}
 			for i, vm := range vms {
-				rows[i] = []string{vm.Name, a.out.State(vm.ObservedState), output.Or(vm.PlanSlug), output.Or(vm.PublicIPv4), a.out.Dim(vm.ID)}
+				addr := vm.Address()
+				rows[i] = []string{vm.Name, a.out.State(vm.ObservedState), output.Or(vm.PlanSlug), output.Or(&addr), a.out.Dim(vm.ID)}
 				counts[vm.ObservedState]++
 			}
-			a.out.Table([]string{"name", "state", "plan", "public ip", "id"}, rows)
+			a.out.Table([]string{"name", "state", "plan", "ip", "id"}, rows)
 			a.out.Summary(append([]string{count(len(vms), "VM")}, stateCounts(counts)...)...)
 			return nil
 		},
@@ -134,9 +135,12 @@ func vmDetail(out *output.Printer, vm *api.Instance) output.Detail {
 	if vm.Zone != nil {
 		location += out.Dim(" (" + *vm.Zone + ")")
 	}
-	network := []output.Pair{{"Public IP", output.Or(vm.PublicIPv4)}, {"Private IP", output.Or(vm.PrivateIPv4)}}
-	if vm.SubnetID != nil {
-		network = append(network, output.Pair{"Subnet", *vm.SubnetID})
+	// A standard VM has one address, reachable from outside; a VPC VM has a
+	// private one, and a public one only through a static IP.
+	addr := vm.Address()
+	network := []output.Pair{{"Static IP", output.Or(&addr)}}
+	if vm.InVPC() {
+		network = []output.Pair{{"Public IP", output.Or(vm.PublicIPv4)}, {"Private IP", output.Or(vm.PrivateIPv4)}, {"Subnet", *vm.SubnetID}}
 	}
 	d := output.Detail{
 		Title:    vm.Name,
@@ -152,7 +156,7 @@ func vmDetail(out *output.Printer, vm *api.Instance) output.Detail {
 		d.Sections = append(d.Sections, []output.Pair{{"Failed", vm.Failure.Reason + out.Dim(" ("+vm.Failure.Code+")")}})
 	}
 	switch {
-	case vm.ObservedState == "running" && vm.PublicIPv4 != nil:
+	case vm.ObservedState == "running" && vm.Address() != "":
 		d.Next = [][2]string{{"Connect", "pantech vm ssh " + vm.Name}}
 	case vm.ObservedState == "stopped":
 		d.Next = [][2]string{{"Start it", "pantech vm start " + vm.Name}}
@@ -293,8 +297,8 @@ Find plans with "pantech plans", images with "pantech images" and your keys with
 				a.out.Line("%s", vm.ID)
 			default:
 				a.out.Note("")
-				if vm.PublicIPv4 != nil {
-					a.out.Line("%s is ready at %s", a.out.Bold(vm.Name), *vm.PublicIPv4)
+				if addr := vm.Address(); addr != "" {
+					a.out.Line("%s is ready at %s", a.out.Bold(vm.Name), addr)
 					a.out.Next("Connect", "pantech vm ssh "+vm.Name)
 				} else {
 					a.out.Line("%s is ready", a.out.Bold(vm.Name))
@@ -433,8 +437,8 @@ func newVMSSHCmd(a *app) *cobra.Command {
 	var user string
 	cmd := &cobra.Command{
 		Use:   "ssh <vm> [-- ssh arguments]",
-		Short: "SSH into a VM by its public IPv4",
-		Long: `SSH into a VM by its public IPv4, with your own ssh and keys. The user is the
+		Short: "SSH into a VM by its address",
+		Long: `SSH into a VM by its address, with your own ssh and keys. The user is the
 image's usual cloud user (ubuntu, debian, rocky; root otherwise); --user changes
 it. Anything after -- goes to ssh.`,
 		Example: `  pantech vm ssh web-1
@@ -453,8 +457,9 @@ it. Anything after -- goes to ssh.`,
 			if _, err := c.Do(ctx(cmd), api.Request{Method: http.MethodGet, Path: "/instances/" + url.PathEscape(id)}, &vm); err != nil {
 				return err
 			}
-			if vm.PublicIPv4 == nil || *vm.PublicIPv4 == "" {
-				return fmt.Errorf("%s has no public IPv4: a VM in a VPC is reached through a public IP (pantech api GET /public-ips)", vm.Name)
+			addr := vm.Address()
+			if addr == "" {
+				return fmt.Errorf("%s has no address reachable from outside: a VM in a VPC is reached through a static IP (pantech api GET /public-ips)", vm.Name)
 			}
 			if user == "" {
 				user = defaultUser(vm.ImageSlug)
@@ -463,7 +468,7 @@ it. Anything after -- goes to ssh.`,
 			if err != nil {
 				return errors.New("no ssh on your PATH")
 			}
-			argv := append([]string{"ssh", user + "@" + *vm.PublicIPv4}, args[1:]...)
+			argv := append([]string{"ssh", user + "@" + addr}, args[1:]...)
 			a.out.Note("%s", a.out.Dim(strings.Join(argv, " ")))
 			// Replace this process, so ssh owns the terminal and its exit code is ours.
 			return syscall.Exec(sshPath, argv, os.Environ())

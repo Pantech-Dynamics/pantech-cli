@@ -49,6 +49,25 @@ type Instance struct {
 	CreatedAt *string  `json:"created_at"`
 }
 
+// InVPC reports whether the VM sits in a VPC subnet. One that does not is a
+// standard VM, behind a security group.
+func (v *Instance) InVPC() bool { return v.SubnetID != nil && *v.SubnetID != "" }
+
+// Address is the VM's address reachable from outside, or "" if it has none:
+// its public IPv4 if set, else, for a standard VM, its one address. The API
+// returns a standard VM's address in private_ipv4 with public_ipv4 null; the
+// console shows it as the VM's "static IP" the same way. A VPC VM's private
+// address is not reachable, so without a public IP it has none.
+func (v *Instance) Address() string {
+	if v.PublicIPv4 != nil && *v.PublicIPv4 != "" {
+		return *v.PublicIPv4
+	}
+	if !v.InVPC() && v.PrivateIPv4 != nil {
+		return *v.PrivateIPv4
+	}
+	return ""
+}
+
 type Plan struct {
 	ID       string `json:"id"`
 	Slug     string `json:"slug"`

@@ -88,15 +88,30 @@ describes the whole exchange.
 
 ## Releasing
 
-`make dist VERSION=v0.2.0` writes `dist/`:
-
-```
-dist/install                       the install script
-dist/latest.txt                    v0.2.0
-dist/v0.2.0/pantech_<os>_<arch>.tar.gz
-dist/v0.2.0/SHA256SUMS
+```sh
+git tag v0.2.0 && git push origin v0.2.0
 ```
 
-Upload its contents to the download URL `install.sh` reads (`DOWNLOAD_URL` at
-its top, `PANTECH_DOWNLOAD_URL` to override), and serve `install.sh` at
-https://pantechdynamics.com/install.
+`.github/workflows/release.yml` tests and builds every platform on a GitHub
+runner (`make dist`), then a runner on the website server, labelled
+`pantech-downloads`, publishes the build with `scripts/publish-release.sh` into
+`/srv/pantech-downloads/cli`. Nginx there serves that directory:
+
+```
+https://pantechdynamics.com/install              the install script
+https://pantechdynamics.com/cli/latest.txt       the newest version (never cached)
+https://pantechdynamics.com/cli/<version>/       pantech_<os>_<arch>.tar.gz, SHA256SUMS
+```
+
+A published version is never replaced: its files are cached for a year, so
+fix forward with a new version. A tag with a hyphen (`v0.2.0-rc.1`) is
+published at its own URL but does not become the latest. Every version
+carries its own installer, so a pre-release can be tried end to end before
+anything public changes:
+
+```sh
+curl -fsSL https://pantechdynamics.com/cli/v0.2.0-rc.1/install | bash -s -- v0.2.0-rc.1
+```
+
+The server side (the directory, the runner, the nginx locations) is set up
+once; pantech-web-new's `deploy/README.md` covers it.

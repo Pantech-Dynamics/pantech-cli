@@ -2,6 +2,7 @@
 # make test      vet and test
 # make dist      every platform's release archive, SHA256SUMS and latest.txt in ./dist,
 #                laid out as install.sh expects: dist/<version>/pantech_<os>_<arch>.tar.gz
+#                (and dist/<version>/install, that version's own installer)
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -s -w -X github.com/Pantech-Dynamics/pantech-cli/internal/cli.Version=$(VERSION)
@@ -27,6 +28,8 @@ dist: clean
 	@cd dist/$(VERSION) && shasum -a 256 *.tar.gz > SHA256SUMS
 	@echo $(VERSION) > dist/latest.txt
 	@cp install.sh dist/install
+	@# Each version carries its own installer, so a pre-release can be tried end to end.
+	@cp install.sh dist/$(VERSION)/install
 	@echo "dist/: upload its contents to the download URL install.sh reads"
 
 clean:

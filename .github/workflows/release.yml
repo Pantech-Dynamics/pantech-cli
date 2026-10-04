@@ -1,0 +1,80 @@
+name: Release
+
+# Push a tag to release:  git tag v0.1.0 && git push origin v0.1.0
+# A tag with a hyphen (v0.2.0-rc.1) is published but not made the latest.
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - run: go test -race ./...
+
+      - run: bash -n install.sh
+
+      - run: make dist VERSION=${{ github.ref_name }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+          retention-days: 30
+
+  # On the website server, where nginx serves /srv/pantech-downloads/cli as
+  # https://pantechdynamics.com/cli/ and /install (see pantech-web-new's
+  # deploy/README.md).
+  publish:
+    needs: build
+    runs-on:
+      - self-hosted
+      - pantech-downloads
+    environment:
+      name: downloads
+      url: https://pantechdynamics.com/install
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+
+      - run: bash scripts/publish-release.sh dist /srv/pantech-downloads/cli
+
+      - name: Check nginx serves it
+        shell: bash
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          served() { curl --fail --silent --show-error -H 'Host: pantechdynamics.com' "http://127.0.0.1$1"; }
+          served "/cli/$VERSION/SHA256SUMS" >/dev/null
+          served "/cli/$VERSION/install" | head -1 | grep -q '^#!/usr/bin/env bash'
+          echo "served: /cli/$VERSION/"
+          case "$VERSION" in
+            *-*) echo "a pre-release: try it with curl -fsSL https://pantechdynamics.com/cli/$VERSION/install | bash -s -- $VERSION" ;;
+            *)
+              test "$(served /cli/latest.txt | tr -d '[:space:]')" = "$VERSION"
+              served /install | head -1 | grep -q '^#!/usr/bin/env bash'
+              echo "served: /install and /cli/latest.txt ($VERSION)"
+              ;;
+          esac

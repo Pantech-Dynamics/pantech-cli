@@ -79,7 +79,11 @@ Against the local console and api-dev:
 ```
 
 The console tells the CLI which API it talks to, so a sign-in through a
-development console calls api-dev. `PANTECH_CONFIG_DIR` points the CLI at
+development console calls api-dev.
+
+`--console-url` (on `auth login`) and `--api-url` (on any command), and their
+`PANTECH_CONSOLE_URL` and `PANTECH_API_URL`, are for the team's own stacks:
+they work, but `--help` does not list them, as customers never need them. `PANTECH_CONFIG_DIR` points the CLI at
 another config directory, and `PANTECH_NO_KEYRING=1` keeps it out of your
 keychain, for testing.
 

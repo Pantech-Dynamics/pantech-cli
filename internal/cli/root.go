@@ -63,6 +63,9 @@ Sign in with "pantech auth login". In CI, set PANTECH_API_KEY instead.`,
 	f := root.PersistentFlags()
 	f.StringVarP(&a.profile, "profile", "p", os.Getenv("PANTECH_PROFILE"), "profile to use (default: the current one)")
 	f.StringVar(&a.apiURL, "api-url", "", "API to call, e.g. https://api-dev.pantechdynamics.com (env PANTECH_API_URL)")
+	// For the team, against api-dev or a local stack: it works, but help does
+	// not offer it, as customers never need it (see README, Development).
+	_ = f.MarkHidden("api-url")
 	f.BoolVar(&a.jsonOut, "json", false, "print the API's JSON instead of a table")
 	f.BoolVarP(&a.quiet, "quiet", "q", false, "print only ids")
 	f.BoolVarP(&a.yes, "yes", "y", false, "do not ask before changes that delete or cost money")

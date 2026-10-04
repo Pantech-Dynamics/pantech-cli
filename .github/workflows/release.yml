@@ -61,12 +61,20 @@ jobs:
       - run: bash scripts/publish-release.sh dist /srv/pantech-downloads/cli
 
       - name: Check nginx serves it
-        if: ${{ !contains(github.ref_name, '-') }}
         shell: bash
+        env:
+          VERSION: ${{ github.ref_name }}
         run: |
           set -euo pipefail
           served() { curl --fail --silent --show-error -H 'Host: pantechdynamics.com' "http://127.0.0.1$1"; }
-          test "$(served /cli/latest.txt | tr -d '[:space:]')" = "${{ github.ref_name }}"
-          served /install | head -1 | grep -q '^#!/usr/bin/env bash'
-          served "/cli/${{ github.ref_name }}/SHA256SUMS" >/dev/null
-          echo "served: /install, /cli/latest.txt and /cli/${{ github.ref_name }}/"
+          served "/cli/$VERSION/SHA256SUMS" >/dev/null
+          served "/cli/$VERSION/install" | head -1 | grep -q '^#!/usr/bin/env bash'
+          echo "served: /cli/$VERSION/"
+          case "$VERSION" in
+            *-*) echo "a pre-release: try it with curl -fsSL https://pantechdynamics.com/cli/$VERSION/install | bash -s -- $VERSION" ;;
+            *)
+              test "$(served /cli/latest.txt | tr -d '[:space:]')" = "$VERSION"
+              served /install | head -1 | grep -q '^#!/usr/bin/env bash'
+              echo "served: /install and /cli/latest.txt ($VERSION)"
+              ;;
+          esac

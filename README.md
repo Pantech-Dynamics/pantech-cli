@@ -105,8 +105,13 @@ https://pantechdynamics.com/cli/<version>/       pantech_<os>_<arch>.tar.gz, SHA
 
 A published version is never replaced: its files are cached for a year, so
 fix forward with a new version. A tag with a hyphen (`v0.2.0-rc.1`) is
-published at its own URL but does not become the latest, for trying a build
-with `curl -fsSL https://pantechdynamics.com/install | bash -s -- v0.2.0-rc.1`.
+published at its own URL but does not become the latest. Every version
+carries its own installer, so a pre-release can be tried end to end before
+anything public changes:
+
+```sh
+curl -fsSL https://pantechdynamics.com/cli/v0.2.0-rc.1/install | bash -s -- v0.2.0-rc.1
+```
 
 The server side (the directory, the runner, the nginx locations) is set up
 once; pantech-web-new's `deploy/README.md` covers it.

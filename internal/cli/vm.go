@@ -1,0 +1,443 @@
+package cli
+
+import (
+	"errors"
+	"fmt"
+	"net/http"
+	"net/url"
+	"os"
+	"os/exec"
+	"strings"
+	"syscall"
+
+	"github.com/spf13/cobra"
+
+	"github.com/Pantech-Dynamics/pantech-cli/internal/api"
+	"github.com/Pantech-Dynamics/pantech-cli/internal/output"
+)
+
+func newVMCmd(a *app) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:     "vm",
+		Aliases: []string{"vms", "instance", "instances"},
+		Short:   "Create, power and delete virtual machines",
+	}
+	cmd.AddCommand(
+		newVMListCmd(a),
+		newVMGetCmd(a),
+		newVMCreateCmd(a),
+		newVMPowerCmd(a, "start", "Start a stopped VM", ""),
+		newVMPowerCmd(a, "stop", "Stop a running VM", "Stop %s? It stays billed for its disk."),
+		newVMPowerCmd(a, "reboot", "Reboot a VM", "Reboot %s? Anything running on it is interrupted."),
+		newVMDeleteCmd(a),
+		newVMSSHCmd(a),
+	)
+	return cmd
+}
+
+func newVMListCmd(a *app) *cobra.Command {
+	var state, search string
+	cmd := &cobra.Command{
+		Use:     "list",
+		Aliases: []string{"ls"},
+		Short:   "List VMs",
+		Args:    cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			c, err := a.client()
+			if err != nil {
+				return err
+			}
+			q := url.Values{}
+			if state != "" {
+				q.Set("observed_state", state)
+			}
+			if search != "" {
+				q.Set("q", search)
+			}
+			vms, err := api.ListAll[api.Instance](ctx(cmd), c, "/instances", q)
+			if err != nil {
+				return err
+			}
+			if a.out.JSON {
+				a.out.Value(vms)
+				return nil
+			}
+			if a.out.Quiet {
+				for _, vm := range vms {
+					a.out.Line("%s", vm.ID)
+				}
+				return nil
+			}
+			if len(vms) == 0 {
+				a.out.Note(`No VMs. Create one with "pantech vm create".`)
+				return nil
+			}
+			rows := make([][]string, len(vms))
+			for i, vm := range vms {
+				rows[i] = []string{vm.ID, vm.Name, a.out.State(vm.ObservedState), output.Or(vm.PlanSlug), output.Or(vm.PublicIPv4), output.Or(vm.Region)}
+			}
+			a.out.Table([]string{"id", "name", "state", "plan", "public ipv4", "region"}, rows)
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&state, "state", "", "only VMs in this state, e.g. running or stopped")
+	cmd.Flags().StringVar(&search, "search", "", "only VMs whose name contains this")
+	return cmd
+}
+
+func newVMGetCmd(a *app) *cobra.Command {
+	return &cobra.Command{
+		Use:     "get <vm>",
+		Aliases: []string{"show"},
+		Short:   "Show a VM, by id or name",
+		Args:    cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := a.client()
+			if err != nil {
+				return err
+			}
+			id, err := resolveVM(cmd, c, args[0])
+			if err != nil {
+				return err
+			}
+			var vm api.Instance
+			res, err := c.Do(ctx(cmd), api.Request{Method: http.MethodGet, Path: "/instances/" + url.PathEscape(id)}, &vm)
+			if err != nil {
+				return err
+			}
+			if a.out.JSON {
+				a.out.RawJSON(res.Body)
+				return nil
+			}
+			printVM(a.out, &vm)
+			return nil
+		},
+	}
+}
+
+func printVM(out *output.Printer, vm *api.Instance) {
+	spec := "—"
+	if vm.Spec != nil {
+		spec = fmt.Sprintf("%d vCPU, %s RAM, %d GB disk", vm.Spec.VCPU, memory(vm.Spec.MemoryMB), vm.Spec.DiskGB)
+	}
+	pairs := [][2]string{
+		{"ID", vm.ID},
+		{"Name", vm.Name},
+		{"State", out.State(vm.ObservedState) + out.Dim(" (wanted: "+vm.DesiredState+")")},
+		{"Plan", output.Or(vm.PlanSlug)},
+		{"Size", spec},
+		{"Image", output.Or(vm.ImageSlug)},
+		{"Region", output.Or(vm.Region) + out.Dim(" / "+output.Or(vm.Zone))},
+		{"Public IPv4", output.Or(vm.PublicIPv4)},
+		{"Private IPv4", output.Or(vm.PrivateIPv4)},
+		{"Created", output.Or(vm.CreatedAt)},
+	}
+	if vm.SubnetID != nil {
+		pairs = append(pairs, [2]string{"Subnet", *vm.SubnetID})
+	}
+	if vm.Failure != nil {
+		pairs = append(pairs, [2]string{"Failure", vm.Failure.Reason + " (" + vm.Failure.Code + ")"})
+	}
+	out.Fields(pairs)
+}
+
+func memory(mb int) string {
+	if mb%1024 == 0 {
+		return fmt.Sprintf("%d GB", mb/1024)
+	}
+	return fmt.Sprintf("%d MB", mb)
+}
+
+func newVMCreateCmd(a *app) *cobra.Command {
+	var name, plan, image, sshKey, region, subnet string
+	var noWait bool
+	cmd := &cobra.Command{
+		Use:   "create",
+		Short: "Create a VM",
+		Long: `Create a VM. The first payment is taken from your credit, or else your
+organization's default card, then the VM is provisioned; this waits until it is
+ready unless you pass --no-wait.
+
+Find plans with "pantech plans", images with "pantech images" and your keys with
+"pantech ssh-keys list".`,
+		Example: `  pantech vm create --name web-1 --plan starter --image ubuntu-24-04 --ssh-key deploy`,
+		Args:    cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			c, err := a.client()
+			if err != nil {
+				return err
+			}
+			body := map[string]any{"name": name, "plan_slug": plan, "image_slug": image}
+			if sshKey != "" {
+				id, err := resolveSSHKey(cmd, c, sshKey)
+				if err != nil {
+					return err
+				}
+				body["ssh_key_id"] = id
+			} else {
+				a.out.Note("No --ssh-key: images have no password login, so you will not be able to SSH in.")
+			}
+			if region != "" {
+				body["region"] = region
+			}
+			if subnet != "" {
+				body["subnet_id"] = subnet
+			}
+
+			question := fmt.Sprintf("Create %s (%s, %s)?", name, plan, image)
+			if price := planPrice(cmd, c, plan); price != "" {
+				question = fmt.Sprintf("Create %s (%s, %s) for about %s a month?", name, plan, image, price)
+			}
+			if err := a.confirm(question); err != nil {
+				return err
+			}
+
+			// Creating a VM answers with an order to follow, not an operation.
+			var accepted struct {
+				OrderID    string `json:"order_id"`
+				InstanceID string `json:"instance_id"`
+			}
+			res, err := c.Do(ctx(cmd), api.Request{Method: http.MethodPost, Path: "/instances", Body: body}, &accepted)
+			if err != nil {
+				return err
+			}
+			if noWait {
+				if a.out.JSON {
+					a.out.RawJSON(res.Body)
+				} else {
+					a.out.Line("%s", accepted.InstanceID)
+					a.out.Note("Ordered. Follow it with: pantech api GET /instance-orders/%s", accepted.OrderID)
+				}
+				return nil
+			}
+
+			a.out.Note("Ordered %s (%s). Waiting for it to provision…", name, accepted.InstanceID)
+			if _, err := api.WaitOrder(ctx(cmd), c, accepted.OrderID, func(o *api.InstanceOrder) {
+				a.out.Note("  %s", a.out.State(o.Status))
+			}); err != nil {
+				return err
+			}
+			var vm api.Instance
+			vres, err := c.Do(ctx(cmd), api.Request{Method: http.MethodGet, Path: "/instances/" + url.PathEscape(accepted.InstanceID)}, &vm)
+			if err != nil {
+				return err
+			}
+			if a.out.JSON {
+				a.out.RawJSON(vres.Body)
+				return nil
+			}
+			if a.out.Quiet {
+				a.out.Line("%s", vm.ID)
+				return nil
+			}
+			a.out.Success("%s is ready.", vm.Name)
+			printVM(a.out, &vm)
+			if vm.PublicIPv4 != nil {
+				a.out.Note("\nConnect with: pantech vm ssh %s", vm.Name)
+			}
+			return nil
+		},
+	}
+	f := cmd.Flags()
+	f.StringVar(&name, "name", "", "its name, also its hostname (required)")
+	f.StringVar(&plan, "plan", "", "plan slug, from pantech plans (required)")
+	f.StringVar(&image, "image", "", "image slug, from pantech images (required)")
+	f.StringVar(&sshKey, "ssh-key", "", "SSH key to install, by id or name")
+	f.StringVar(&region, "region", "", "region code (default: the platform's region)")
+	f.StringVar(&subnet, "subnet", "", "VPC subnet id, for a VM without its own public IPv4")
+	f.BoolVar(&noWait, "no-wait", false, "return once ordered, without waiting for it to provision")
+	_ = cmd.MarkFlagRequired("name")
+	_ = cmd.MarkFlagRequired("plan")
+	_ = cmd.MarkFlagRequired("image")
+	return cmd
+}
+
+// planPrice is the plan's monthly estimate, formatted, or "" when unknown.
+func planPrice(cmd *cobra.Command, c *api.Client, slug string) string {
+	plans, err := api.ListAll[api.Plan](ctx(cmd), c, "/plans", nil)
+	if err != nil {
+		return ""
+	}
+	for _, p := range plans {
+		if p.Slug == slug && p.Price != nil {
+			return money(p.Price.MonthlyEstimateMinor, p.Price.Currency)
+		}
+	}
+	return ""
+}
+
+// money formats minor units: 1700000 NGN → NGN 17,000.00.
+func money(minor int64, currency string) string {
+	whole, cents := minor/100, minor%100
+	s := fmt.Sprint(whole)
+	for i := len(s) - 3; i > 0; i -= 3 {
+		s = s[:i] + "," + s[i:]
+	}
+	return fmt.Sprintf("%s %s.%02d", currency, s, cents)
+}
+
+func newVMPowerCmd(a *app, action, short, question string) *cobra.Command {
+	var noWait bool
+	cmd := &cobra.Command{
+		Use:   action + " <vm>",
+		Short: short + ", by id or name",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := a.client()
+			if err != nil {
+				return err
+			}
+			id, err := resolveVM(cmd, c, args[0])
+			if err != nil {
+				return err
+			}
+			if question != "" {
+				if err := a.confirm(fmt.Sprintf(question, args[0])); err != nil {
+					return err
+				}
+			}
+			return a.runWrite(cmd, c, api.Request{Method: http.MethodPost, Path: "/instances/" + url.PathEscape(id) + "/" + action}, noWait, args[0])
+		},
+	}
+	cmd.Flags().BoolVar(&noWait, "no-wait", false, "return the operation id without waiting")
+	return cmd
+}
+
+func newVMDeleteCmd(a *app) *cobra.Command {
+	var noWait bool
+	cmd := &cobra.Command{
+		Use:     "delete <vm>",
+		Aliases: []string{"rm"},
+		Short:   "Delete a VM and its root disk, by id or name",
+		Args:    cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := a.client()
+			if err != nil {
+				return err
+			}
+			id, err := resolveVM(cmd, c, args[0])
+			if err != nil {
+				return err
+			}
+			if err := a.confirm(fmt.Sprintf("Delete %s (%s)? Its root disk is erased and cannot be recovered.", args[0], id)); err != nil {
+				return err
+			}
+			return a.runWrite(cmd, c, api.Request{Method: http.MethodDelete, Path: "/instances/" + url.PathEscape(id)}, noWait, args[0])
+		},
+	}
+	cmd.Flags().BoolVar(&noWait, "no-wait", false, "return the operation id without waiting")
+	return cmd
+}
+
+// runWrite sends a write that answers with an operation, then follows it.
+func (a *app) runWrite(cmd *cobra.Command, c *api.Client, req api.Request, noWait bool, subject string) error {
+	var accepted api.Accepted
+	res, err := c.Do(ctx(cmd), req, &accepted)
+	if err != nil {
+		return err
+	}
+	if noWait || accepted.OperationID == "" {
+		if a.out.JSON {
+			a.out.RawJSON(res.Body)
+		} else {
+			a.out.Line("%s", accepted.OperationID)
+		}
+		return nil
+	}
+	op, err := api.WaitOperation(ctx(cmd), c, accepted.OperationID, func(op *api.Operation) {
+		if !a.out.JSON && !a.out.Quiet {
+			a.out.Note("  %s %s", op.Kind, a.out.State(op.Status))
+		}
+	})
+	if err != nil {
+		return err
+	}
+	if a.out.JSON {
+		a.out.Value(op)
+		return nil
+	}
+	a.out.Success("%s: %s %s.", subject, op.Kind, op.Status)
+	return nil
+}
+
+func newVMSSHCmd(a *app) *cobra.Command {
+	var user string
+	cmd := &cobra.Command{
+		Use:   "ssh <vm> [-- ssh arguments]",
+		Short: "SSH into a VM by its public IPv4",
+		Long: `SSH into a VM by its public IPv4, with your own ssh and keys. The user is the
+image's usual cloud user (ubuntu, debian, rocky; root otherwise); --user changes
+it. Anything after -- goes to ssh.`,
+		Example: `  pantech vm ssh web-1
+  pantech vm ssh web-1 -- -i ~/.ssh/deploy -L 8080:localhost:80`,
+		Args: cobra.MinimumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := a.client()
+			if err != nil {
+				return err
+			}
+			id, err := resolveVM(cmd, c, args[0])
+			if err != nil {
+				return err
+			}
+			var vm api.Instance
+			if _, err := c.Do(ctx(cmd), api.Request{Method: http.MethodGet, Path: "/instances/" + url.PathEscape(id)}, &vm); err != nil {
+				return err
+			}
+			if vm.PublicIPv4 == nil || *vm.PublicIPv4 == "" {
+				return fmt.Errorf("%s has no public IPv4: a VM in a VPC is reached through a public IP (pantech api GET /public-ips)", vm.Name)
+			}
+			if user == "" {
+				user = defaultUser(vm.ImageSlug)
+			}
+			sshPath, err := exec.LookPath("ssh")
+			if err != nil {
+				return errors.New("no ssh on your PATH")
+			}
+			argv := append([]string{"ssh", user + "@" + *vm.PublicIPv4}, args[1:]...)
+			a.out.Note("%s", a.out.Dim(strings.Join(argv, " ")))
+			// Replace this process, so ssh owns the terminal and its exit code is ours.
+			return syscall.Exec(sshPath, argv, os.Environ())
+		},
+	}
+	cmd.Flags().StringVarP(&user, "user", "l", "", "user to log in as (default: the image's usual one)")
+	return cmd
+}
+
+// defaultUser is the usual cloud user of an image, by its slug.
+func defaultUser(image *string) string {
+	if image == nil {
+		return "root"
+	}
+	for _, distro := range []string{"ubuntu", "debian", "rocky", "almalinux", "fedora"} {
+		if strings.HasPrefix(*image, distro) {
+			return distro
+		}
+	}
+	return "root"
+}
+
+// resolveVM takes an id (vm_…) or a name and returns the id.
+func resolveVM(cmd *cobra.Command, c *api.Client, ref string) (string, error) {
+	if strings.HasPrefix(ref, "vm_") {
+		return ref, nil
+	}
+	vms, err := api.ListAll[api.Instance](ctx(cmd), c, "/instances", url.Values{"q": {ref}})
+	if err != nil {
+		return "", err
+	}
+	var ids []string
+	for _, vm := range vms {
+		if vm.Name == ref {
+			ids = append(ids, vm.ID)
+		}
+	}
+	switch len(ids) {
+	case 0:
+		return "", fmt.Errorf("no VM named %q: see pantech vm list", ref)
+	case 1:
+		return ids[0], nil
+	default:
+		return "", fmt.Errorf("%d VMs are named %q: use an id (%s)", len(ids), ref, strings.Join(ids, ", "))
+	}
+}

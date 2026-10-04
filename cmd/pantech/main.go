@@ -4,13 +4,13 @@ package main
 import (
 	"context"
 	"errors"
-	"fmt"
 	"os"
 	"os/signal"
 	"syscall"
 
 	"github.com/Pantech-Dynamics/pantech-cli/internal/api"
 	"github.com/Pantech-Dynamics/pantech-cli/internal/cli"
+	"github.com/Pantech-Dynamics/pantech-cli/internal/output"
 )
 
 // Exit codes, for scripts:
@@ -32,7 +32,7 @@ func main() {
 	if errors.Is(err, context.Canceled) {
 		os.Exit(130)
 	}
-	fmt.Fprintln(os.Stderr, "Error:", err)
+	output.New(false, false).Error(err)
 	os.Exit(exitCode(err))
 }
 

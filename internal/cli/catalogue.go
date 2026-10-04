@@ -44,7 +44,8 @@ func newPlansCmd(a *app) *cobra.Command {
 				}
 				rows[i] = []string{p.Slug, p.Name, fmt.Sprint(p.VCPU), memory(p.MemoryMB), fmt.Sprintf("%d GB", p.DiskGB), price}
 			}
-			a.out.Table([]string{"slug", "name", "vcpu", "memory", "disk", "price"}, rows)
+			a.out.Table([]string{"plan", "name", "vcpu", "memory", "disk", "price"}, rows)
+			a.out.Summary(count(len(plans), "plan"), "prices are monthly estimates")
 			return nil
 		},
 	}
@@ -71,9 +72,10 @@ func newImagesCmd(a *app) *cobra.Command {
 			}
 			rows := make([][]string, len(images))
 			for i, img := range images {
-				rows[i] = []string{img.Slug, img.Name, img.Version, strings.Join(img.Zones, ", ")}
+				rows[i] = []string{img.Slug, img.Name + " " + img.Version, a.out.Dim(strings.Join(img.Zones, ", "))}
 			}
-			a.out.Table([]string{"slug", "name", "version", "zones"}, rows)
+			a.out.Table([]string{"image", "name", "zones"}, rows)
+			a.out.Summary(count(len(images), "image"))
 			return nil
 		},
 	}
@@ -98,15 +100,20 @@ func newRegionsCmd(a *app) *cobra.Command {
 			}
 			var rows [][]string
 			for _, r := range regions {
-				for _, p := range r.Placements {
-					available := a.out.State("available")
+				for i, p := range r.Placements {
+					status := a.out.State("available")
 					if !p.Available {
-						available = a.out.Dim("unavailable")
+						status = a.out.State("unavailable")
 						if p.UnavailableReason != nil {
-							available += a.out.Dim(": " + *p.UnavailableReason)
+							status += a.out.Dim("  " + *p.UnavailableReason)
 						}
 					}
-					rows = append(rows, []string{r.Code, r.Name, p.Kind, p.Zone, available})
+					// The region once, on its first placement.
+					code, name := r.Code, r.Name
+					if i > 0 {
+						code, name = "", ""
+					}
+					rows = append(rows, []string{code, name, p.Kind, p.Zone, status})
 				}
 			}
 			a.out.Table([]string{"region", "name", "placement", "zone", "status"}, rows)

@@ -15,6 +15,7 @@ import (
 	"github.com/Pantech-Dynamics/pantech-cli/internal/api"
 	"github.com/Pantech-Dynamics/pantech-cli/internal/auth"
 	"github.com/Pantech-Dynamics/pantech-cli/internal/config"
+	"github.com/Pantech-Dynamics/pantech-cli/internal/output"
 )
 
 func newAuthCmd(a *app) *cobra.Command {
@@ -246,26 +247,28 @@ func newStatusCmd(a *app) *cobra.Command {
 				a.out.RawJSON(res.Body)
 				return nil
 			}
-			source := fmt.Sprintf("profile %q", a.profileName())
+			source := fmt.Sprintf("profile %s", a.profileName())
 			if os.Getenv("PANTECH_API_KEY") != "" {
 				source = "PANTECH_API_KEY"
 			}
 			profile := a.profileOrDefault()
-			org := me.OrganizationID
+			title := me.OrganizationID
+			subtitle := ""
 			if profile.OrganizationName != "" && profile.OrganizationID == me.OrganizationID {
-				org = fmt.Sprintf("%s (%s)", profile.OrganizationName, me.OrganizationID)
+				title, subtitle = profile.OrganizationName, me.OrganizationID
 			}
 			expires := "never"
 			if me.APIKey.ExpiresAt != nil {
-				expires = *me.APIKey.ExpiresAt
+				expires = output.When(me.APIKey.ExpiresAt)
 			}
-			a.out.Fields([][2]string{
-				{"Organization", org},
-				{"Key", fmt.Sprintf("%s (%s)", me.APIKey.Name, me.APIKey.ID)},
-				{"Scopes", strings.Join(me.APIKey.Scopes, ", ")},
-				{"Expires", expires},
-				{"API", c.BaseURL},
-				{"From", source},
+			a.out.Print(output.Detail{
+				Title:    title,
+				State:    a.out.State("active"),
+				Subtitle: subtitle,
+				Sections: [][]output.Pair{
+					{{"Key", me.APIKey.Name + "  " + a.out.Dim(me.APIKey.ID)}, {"Access", strings.Join(me.APIKey.Scopes, ", ")}, {"Expires", expires}},
+					{{"API", c.BaseURL}, {"From", source}},
+				},
 			})
 			return nil
 		},

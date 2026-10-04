@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Pantech-Dynamics/pantech-cli/internal/api"
+	"github.com/Pantech-Dynamics/pantech-cli/internal/output"
 )
 
 func newOperationsCmd(a *app) *cobra.Command {
@@ -52,11 +53,16 @@ func newOperationsCmd(a *app) *cobra.Command {
 				if err != nil {
 					return err
 				}
+				steps := a.out.Steps()
+				steps.Start("Waiting for " + args[0])
 				op, err := api.WaitOperation(ctx(cmd), c, args[0], func(op *api.Operation) {
-					if !a.out.JSON && !a.out.Quiet {
-						a.out.Note("  %s %s", op.Kind, a.out.State(op.Status))
-					}
+					steps.Start(humanKind(op.Kind) + ": " + op.Status)
 				})
+				if err != nil {
+					steps.Fail("", "")
+				} else {
+					steps.Done(humanKind(op.Kind)+": succeeded", "")
+				}
 				if a.out.JSON && op != nil {
 					a.out.Value(op)
 				}
@@ -68,16 +74,28 @@ func newOperationsCmd(a *app) *cobra.Command {
 }
 
 func printOperation(a *app, op *api.Operation) {
-	pairs := [][2]string{
-		{"ID", op.ID},
-		{"Kind", op.Kind},
-		{"Status", a.out.State(op.Status)},
-		{"Resource", op.ResourceType + " " + op.ResourceID},
+	d := output.Detail{
+		Title:    humanKind(op.Kind),
+		State:    a.out.State(op.Status),
+		Subtitle: op.ID,
+		Sections: [][]output.Pair{{{"Resource", op.ResourceType + "  " + a.out.Dim(op.ResourceID)}}},
 	}
 	if op.Failure != nil {
-		pairs = append(pairs, [2]string{"Failure", fmt.Sprintf("%s (%s)", op.Failure.Reason, op.Failure.Code)})
+		d.Sections = append(d.Sections, []output.Pair{{"Failed", op.Failure.Reason + a.out.Dim(" ("+op.Failure.Code+")")}})
 	}
-	a.out.Fields(pairs)
+	if !op.Done() {
+		d.Next = [][2]string{{"Wait for it", "pantech operations wait " + op.ID}}
+	}
+	a.out.Print(d)
+}
+
+// humanKind is an operation's kind as words: stop_instance → Stop instance.
+func humanKind(kind string) string {
+	s := strings.ReplaceAll(kind, "_", " ")
+	if s == "" {
+		return "Operation"
+	}
+	return strings.ToUpper(s[:1]) + s[1:]
 }
 
 func newAPICmd(a *app) *cobra.Command {

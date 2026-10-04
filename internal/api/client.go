@@ -74,7 +74,7 @@ func (p *Problem) Error() string {
 		fmt.Fprintf(&b, "\n  %s: %s", e.Field, e.Message)
 	}
 	if p.Code != "" {
-		fmt.Fprintf(&b, " (%s", p.Code)
+		fmt.Fprintf(&b, "\n(%s", p.Code)
 		if p.RequestID != "" {
 			fmt.Fprintf(&b, ", request %s", p.RequestID)
 		}

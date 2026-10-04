@@ -47,13 +47,15 @@ func newSSHKeysListCmd(a *app) *cobra.Command {
 					a.out.Line("%s", k.ID)
 				}
 			case len(keys) == 0:
-				a.out.Note(`No SSH keys. Add yours with "pantech ssh-keys add ~/.ssh/id_ed25519.pub".`)
+				a.out.Note("No SSH keys yet.")
+				a.out.Next("Add yours", "pantech ssh-keys add ~/.ssh/id_ed25519.pub")
 			default:
 				rows := make([][]string, len(keys))
 				for i, k := range keys {
-					rows[i] = []string{k.ID, k.Name, k.Fingerprint, output.Or(k.CreatedAt)}
+					rows[i] = []string{k.Name, k.Fingerprint, output.Ago(k.CreatedAt), a.out.Dim(k.ID)}
 				}
-				a.out.Table([]string{"id", "name", "fingerprint", "created"}, rows)
+				a.out.Table([]string{"name", "fingerprint", "added", "id"}, rows)
+				a.out.Summary(count(len(keys), "SSH key"))
 			}
 			return nil
 		},
@@ -170,5 +172,5 @@ func resolveSSHKey(cmd *cobra.Command, c *api.Client, ref string) (string, error
 			return k.ID, nil
 		}
 	}
-	return "", fmt.Errorf("no SSH key named %q: see pantech ssh-keys list", ref)
+	return "", fmt.Errorf("no SSH key named %q\nSee: pantech ssh-keys list", ref)
 }

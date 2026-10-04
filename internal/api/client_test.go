@@ -77,7 +77,7 @@ func TestClientErrorsAreNotRetried(t *testing.T) {
 	if p.Code != "VALIDATION_FAILED" || len(p.Errors) != 1 || !IsCode(err, "VALIDATION_FAILED") {
 		t.Fatalf("problem = %+v", p)
 	}
-	want := "Check the fields.\n  name: Give it a name. (VALIDATION_FAILED, request req_1)"
+	want := "Check the fields.\n  name: Give it a name.\n(VALIDATION_FAILED, request req_1)"
 	if p.Error() != want {
 		t.Fatalf("Error() = %q, want %q", p.Error(), want)
 	}

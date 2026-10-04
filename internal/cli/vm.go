@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"sort"
 	"strings"
 	"syscall"
 
@@ -26,9 +27,9 @@ func newVMCmd(a *app) *cobra.Command {
 		newVMListCmd(a),
 		newVMGetCmd(a),
 		newVMCreateCmd(a),
-		newVMPowerCmd(a, "start", "Start a stopped VM", ""),
-		newVMPowerCmd(a, "stop", "Stop a running VM", "Stop %s? It stays billed for its disk."),
-		newVMPowerCmd(a, "reboot", "Reboot a VM", "Reboot %s? Anything running on it is interrupted."),
+		newVMPowerCmd(a, "start", "Start a stopped VM", "", verb{"Starting", "Started"}),
+		newVMPowerCmd(a, "stop", "Stop a running VM", "Stop %s? It stays billed for its disk.", verb{"Stopping", "Stopped"}),
+		newVMPowerCmd(a, "reboot", "Reboot a VM", "Reboot %s? Anything running on it is interrupted.", verb{"Rebooting", "Rebooted"}),
 		newVMDeleteCmd(a),
 		newVMSSHCmd(a),
 	)
@@ -69,14 +70,18 @@ func newVMListCmd(a *app) *cobra.Command {
 				return nil
 			}
 			if len(vms) == 0 {
-				a.out.Note(`No VMs. Create one with "pantech vm create".`)
+				a.out.Note("No VMs yet.")
+				a.out.Next("Create one", "pantech vm create --name web-1 --plan starter --image ubuntu-24-04")
 				return nil
 			}
 			rows := make([][]string, len(vms))
+			counts := map[string]int{}
 			for i, vm := range vms {
-				rows[i] = []string{vm.ID, vm.Name, a.out.State(vm.ObservedState), output.Or(vm.PlanSlug), output.Or(vm.PublicIPv4), output.Or(vm.Region)}
+				rows[i] = []string{vm.Name, a.out.State(vm.ObservedState), output.Or(vm.PlanSlug), output.Or(vm.PublicIPv4), a.out.Dim(vm.ID)}
+				counts[vm.ObservedState]++
 			}
-			a.out.Table([]string{"id", "name", "state", "plan", "public ipv4", "region"}, rows)
+			a.out.Table([]string{"name", "state", "plan", "public ip", "id"}, rows)
+			a.out.Summary(append([]string{count(len(vms), "VM")}, stateCounts(counts)...)...)
 			return nil
 		},
 	}
@@ -109,36 +114,81 @@ func newVMGetCmd(a *app) *cobra.Command {
 				a.out.RawJSON(res.Body)
 				return nil
 			}
-			printVM(a.out, &vm)
+			a.out.Print(vmDetail(a.out, &vm))
 			return nil
 		},
 	}
 }
 
-func printVM(out *output.Printer, vm *api.Instance) {
-	spec := "—"
+// vmDetail is one VM: name and state, then what it is, where, and how to reach it.
+func vmDetail(out *output.Printer, vm *api.Instance) output.Detail {
+	state := out.State(vm.ObservedState)
+	if vm.DesiredState != "" && vm.DesiredState != vm.ObservedState && vm.DesiredState != "present" {
+		state += out.Dim(" → " + vm.DesiredState)
+	}
+	size := output.Or(vm.PlanSlug)
 	if vm.Spec != nil {
-		spec = fmt.Sprintf("%d vCPU, %s RAM, %d GB disk", vm.Spec.VCPU, memory(vm.Spec.MemoryMB), vm.Spec.DiskGB)
+		size += fmt.Sprintf(" · %d vCPU · %s RAM · %d GB disk", vm.Spec.VCPU, memory(vm.Spec.MemoryMB), vm.Spec.DiskGB)
 	}
-	pairs := [][2]string{
-		{"ID", vm.ID},
-		{"Name", vm.Name},
-		{"State", out.State(vm.ObservedState) + out.Dim(" (wanted: "+vm.DesiredState+")")},
-		{"Plan", output.Or(vm.PlanSlug)},
-		{"Size", spec},
-		{"Image", output.Or(vm.ImageSlug)},
-		{"Region", output.Or(vm.Region) + out.Dim(" / "+output.Or(vm.Zone))},
-		{"Public IPv4", output.Or(vm.PublicIPv4)},
-		{"Private IPv4", output.Or(vm.PrivateIPv4)},
-		{"Created", output.Or(vm.CreatedAt)},
+	location := output.Or(vm.Region)
+	if vm.Zone != nil {
+		location += out.Dim(" (" + *vm.Zone + ")")
 	}
+	network := []output.Pair{{"Public IP", output.Or(vm.PublicIPv4)}, {"Private IP", output.Or(vm.PrivateIPv4)}}
 	if vm.SubnetID != nil {
-		pairs = append(pairs, [2]string{"Subnet", *vm.SubnetID})
+		network = append(network, output.Pair{"Subnet", *vm.SubnetID})
+	}
+	d := output.Detail{
+		Title:    vm.Name,
+		State:    state,
+		Subtitle: vm.ID,
+		Sections: [][]output.Pair{
+			{{"Plan", size}, {"Image", output.Or(vm.ImageSlug)}, {"Location", location}},
+			network,
+			{{"Created", output.When(vm.CreatedAt)}},
+		},
 	}
 	if vm.Failure != nil {
-		pairs = append(pairs, [2]string{"Failure", vm.Failure.Reason + " (" + vm.Failure.Code + ")"})
+		d.Sections = append(d.Sections, []output.Pair{{"Failed", vm.Failure.Reason + out.Dim(" ("+vm.Failure.Code+")")}})
 	}
-	out.Fields(pairs)
+	switch {
+	case vm.ObservedState == "running" && vm.PublicIPv4 != nil:
+		d.Next = [][2]string{{"Connect", "pantech vm ssh " + vm.Name}}
+	case vm.ObservedState == "stopped":
+		d.Next = [][2]string{{"Start it", "pantech vm start " + vm.Name}}
+	}
+	return d
+}
+
+// count is "1 VM", "4 VMs".
+func count(n int, noun string) string {
+	if n == 1 {
+		return fmt.Sprintf("1 %s", noun)
+	}
+	return fmt.Sprintf("%d %ss", n, noun)
+}
+
+// stateCounts is "2 running", "1 stopped"…, most common first.
+func stateCounts(counts map[string]int) []string {
+	type kv struct {
+		state string
+		n     int
+	}
+	var all []kv
+	for s, n := range counts {
+		all = append(all, kv{s, n})
+	}
+	sort.Slice(all, func(i, j int) bool {
+		if all[i].n != all[j].n {
+			return all[i].n > all[j].n
+		}
+		return all[i].state < all[j].state
+	})
+	out := make([]string, len(all))
+	for i, c := range all {
+		out[i] = fmt.Sprintf("%d %s", c.n, c.state)
+	}
+	return out
 }
 
 func memory(mb int) string {
@@ -175,7 +225,7 @@ Find plans with "pantech plans", images with "pantech images" and your keys with
 				}
 				body["ssh_key_id"] = id
 			} else {
-				a.out.Note("No --ssh-key: images have no password login, so you will not be able to SSH in.")
+				a.out.Warn("No --ssh-key: images have no password login, so you will not be able to SSH in.")
 			}
 			if region != "" {
 				body["region"] = region
@@ -194,8 +244,10 @@ Find plans with "pantech plans", images with "pantech images" and your keys with
 
 			// Creating a VM answers with an order to follow, not an operation.
 			var accepted struct {
-				OrderID    string `json:"order_id"`
-				InstanceID string `json:"instance_id"`
+				OrderID     string `json:"order_id"`
+				InstanceID  string `json:"instance_id"`
+				AmountMinor int64  `json:"amount_minor"`
+				Currency    string `json:"currency"`
 			}
 			res, err := c.Do(ctx(cmd), api.Request{Method: http.MethodPost, Path: "/instances", Body: body}, &accepted)
 			if err != nil {
@@ -206,15 +258,27 @@ Find plans with "pantech plans", images with "pantech images" and your keys with
 					a.out.RawJSON(res.Body)
 				} else {
 					a.out.Line("%s", accepted.InstanceID)
-					a.out.Note("Ordered. Follow it with: pantech api GET /instance-orders/%s", accepted.OrderID)
+					a.out.Next("Follow it", "pantech api GET /instance-orders/"+accepted.OrderID)
 				}
 				return nil
 			}
 
-			a.out.Note("Ordered %s (%s). Waiting for it to provision…", name, accepted.InstanceID)
-			if _, err := api.WaitOrder(ctx(cmd), c, accepted.OrderID, func(o *api.InstanceOrder) {
-				a.out.Note("  %s", a.out.State(o.Status))
-			}); err != nil {
+			steps := a.out.Steps()
+			steps.Mark("Ordered "+name, money(accepted.AmountMinor, accepted.Currency))
+			steps.Start("Taking payment")
+			paid := false
+			_, err = api.WaitOrder(ctx(cmd), c, accepted.OrderID, func(o *api.InstanceOrder) {
+				if !paid && o.Status != "awaiting_payment" && o.Status != "payment_failed" {
+					paid = true
+					steps.Done("Payment taken", "")
+					steps.Start("Provisioning")
+				}
+				if o.Status == "provisioned" {
+					steps.Done("Provisioned", "")
+				}
+			})
+			if err != nil {
+				steps.Fail("", "")
 				return err
 			}
 			var vm api.Instance
@@ -222,18 +286,20 @@ Find plans with "pantech plans", images with "pantech images" and your keys with
 			if err != nil {
 				return err
 			}
-			if a.out.JSON {
+			switch {
+			case a.out.JSON:
 				a.out.RawJSON(vres.Body)
-				return nil
-			}
-			if a.out.Quiet {
+			case a.out.Quiet:
 				a.out.Line("%s", vm.ID)
-				return nil
-			}
-			a.out.Success("%s is ready.", vm.Name)
-			printVM(a.out, &vm)
-			if vm.PublicIPv4 != nil {
-				a.out.Note("\nConnect with: pantech vm ssh %s", vm.Name)
+			default:
+				a.out.Note("")
+				if vm.PublicIPv4 != nil {
+					a.out.Line("%s is ready at %s", a.out.Bold(vm.Name), *vm.PublicIPv4)
+					a.out.Next("Connect", "pantech vm ssh "+vm.Name)
+				} else {
+					a.out.Line("%s is ready", a.out.Bold(vm.Name))
+					a.out.Next("Details", "pantech vm get "+vm.Name)
+				}
 			}
 			return nil
 		},
@@ -276,7 +342,10 @@ func money(minor int64, currency string) string {
 	return fmt.Sprintf("%s %s.%02d", currency, s, cents)
 }
 
-func newVMPowerCmd(a *app, action, short, question string) *cobra.Command {
+// verb is how a change reads while it happens and once it has.
+type verb struct{ ing, ed string }
+
+func newVMPowerCmd(a *app, action, short, question string, v verb) *cobra.Command {
 	var noWait bool
 	cmd := &cobra.Command{
 		Use:   action + " <vm>",
@@ -296,7 +365,7 @@ func newVMPowerCmd(a *app, action, short, question string) *cobra.Command {
 					return err
 				}
 			}
-			return a.runWrite(cmd, c, api.Request{Method: http.MethodPost, Path: "/instances/" + url.PathEscape(id) + "/" + action}, noWait, args[0])
+			return a.runWrite(cmd, c, api.Request{Method: http.MethodPost, Path: "/instances/" + url.PathEscape(id) + "/" + action}, noWait, v, args[0])
 		},
 	}
 	cmd.Flags().BoolVar(&noWait, "no-wait", false, "return the operation id without waiting")
@@ -322,15 +391,16 @@ func newVMDeleteCmd(a *app) *cobra.Command {
 			if err := a.confirm(fmt.Sprintf("Delete %s (%s)? Its root disk is erased and cannot be recovered.", args[0], id)); err != nil {
 				return err
 			}
-			return a.runWrite(cmd, c, api.Request{Method: http.MethodDelete, Path: "/instances/" + url.PathEscape(id)}, noWait, args[0])
+			return a.runWrite(cmd, c, api.Request{Method: http.MethodDelete, Path: "/instances/" + url.PathEscape(id)}, noWait, verb{"Deleting", "Deleted"}, args[0])
 		},
 	}
 	cmd.Flags().BoolVar(&noWait, "no-wait", false, "return the operation id without waiting")
 	return cmd
 }
 
-// runWrite sends a write that answers with an operation, then follows it.
-func (a *app) runWrite(cmd *cobra.Command, c *api.Client, req api.Request, noWait bool, subject string) error {
+// runWrite sends a write that answers with an operation, then follows it:
+// "⠼ Stopping web-1  0:03", then "✓ Stopped web-1  9s".
+func (a *app) runWrite(cmd *cobra.Command, c *api.Client, req api.Request, noWait bool, v verb, subject string) error {
 	var accepted api.Accepted
 	res, err := c.Do(ctx(cmd), req, &accepted)
 	if err != nil {
@@ -341,22 +411,21 @@ func (a *app) runWrite(cmd *cobra.Command, c *api.Client, req api.Request, noWai
 			a.out.RawJSON(res.Body)
 		} else {
 			a.out.Line("%s", accepted.OperationID)
+			a.out.Next("Follow it", "pantech operations wait "+accepted.OperationID)
 		}
 		return nil
 	}
-	op, err := api.WaitOperation(ctx(cmd), c, accepted.OperationID, func(op *api.Operation) {
-		if !a.out.JSON && !a.out.Quiet {
-			a.out.Note("  %s %s", op.Kind, a.out.State(op.Status))
-		}
-	})
+	steps := a.out.Steps()
+	steps.Start(v.ing + " " + subject)
+	op, err := api.WaitOperation(ctx(cmd), c, accepted.OperationID, nil)
 	if err != nil {
+		steps.Fail("", "")
 		return err
 	}
+	steps.Done(v.ed+" "+subject, "")
 	if a.out.JSON {
 		a.out.Value(op)
-		return nil
 	}
-	a.out.Success("%s: %s %s.", subject, op.Kind, op.Status)
 	return nil
 }
 
@@ -434,10 +503,10 @@ func resolveVM(cmd *cobra.Command, c *api.Client, ref string) (string, error) {
 	}
 	switch len(ids) {
 	case 0:
-		return "", fmt.Errorf("no VM named %q: see pantech vm list", ref)
+		return "", fmt.Errorf("no VM named %q\nSee: pantech vm list", ref)
 	case 1:
 		return ids[0], nil
 	default:
-		return "", fmt.Errorf("%d VMs are named %q: use an id (%s)", len(ids), ref, strings.Join(ids, ", "))
+		return "", fmt.Errorf("%d VMs are named %q: use its id\n(%s)", len(ids), ref, strings.Join(ids, ", "))
 	}
 }

@@ -44,7 +44,7 @@ Organization › API keys and pass it on stdin:
 
 or skip storing anything and set PANTECH_API_KEY.`,
 		Example: `  pantech auth login
-  pantech auth login --profile staging --console-url https://staging.console.pantechdynamics.com
+  pantech --profile acme auth login
   echo "$PANTECH_KEY" | pantech auth login --with-token`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -161,6 +161,9 @@ or skip storing anything and set PANTECH_API_KEY.`,
 	cmd.Flags().BoolVar(&withToken, "with-token", false, "read an API key from stdin instead of signing in in a browser")
 	cmd.Flags().BoolVar(&noBrowser, "no-browser", false, "print the sign-in link instead of opening a browser")
 	cmd.Flags().StringVar(&consoleURL, "console-url", "", "console to sign in through (env PANTECH_CONSOLE_URL)")
+	// For the team, through staging or a local console: it works, but help
+	// does not offer it, as customers never need it (see README, Development).
+	_ = cmd.Flags().MarkHidden("console-url")
 	return cmd
 }
 

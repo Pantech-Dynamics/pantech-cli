@@ -58,3 +58,20 @@ func TestKeyFileWithoutKeychain(t *testing.T) {
 		t.Fatalf("deleting one profile's key touched another's: %q", k)
 	}
 }
+
+// The flags for the team's own stacks work but stay out of every help.
+func TestDevFlagsAreHiddenButKept(t *testing.T) {
+	root := NewRoot()
+	api := root.PersistentFlags().Lookup("api-url")
+	if api == nil || !api.Hidden {
+		t.Fatalf("--api-url should exist and be hidden: %+v", api)
+	}
+	login, _, err := root.Find([]string{"auth", "login"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	console := login.Flags().Lookup("console-url")
+	if console == nil || !console.Hidden {
+		t.Fatalf("--console-url should exist and be hidden: %+v", console)
+	}
+}

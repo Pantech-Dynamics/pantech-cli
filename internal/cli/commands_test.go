@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"net/http/httptest"
 	"reflect"
 	"strings"
@@ -16,6 +17,7 @@ import (
 	"github.com/Pantech-Dynamics/pantech-cli/internal/api"
 	"github.com/Pantech-Dynamics/pantech-cli/internal/config"
 	"github.com/Pantech-Dynamics/pantech-cli/internal/output"
+	"github.com/Pantech-Dynamics/pantech-cli/internal/update"
 )
 
 const (
@@ -630,5 +632,56 @@ func TestDBGetShowsWhatSecurityGroupsAdd(t *testing.T) {
 		if !strings.Contains(r.stdout, want) {
 			t.Fatalf("db get lacks %q:\n%s", want, r.stdout)
 		}
+	}
+}
+
+func TestUpgradeCheck(t *testing.T) {
+	dl := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/latest.txt" {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = w.Write([]byte("v0.1.5\n"))
+	}))
+	t.Cleanup(dl.Close)
+	oldURL, oldVersion := update.BaseURL, Version
+	update.BaseURL = dl.URL
+	t.Cleanup(func() { update.BaseURL, Version = oldURL, oldVersion })
+	_, srv := newFakeAPI(t)
+
+	Version = "v0.1.4"
+	r := run(t, srv, "", "upgrade", "--check")
+	if r.err != nil || r.stdout != "v0.1.5\n" || !strings.Contains(r.stderr, "pantech upgrade") {
+		t.Fatalf("stdout %q stderr %q err %v", r.stdout, r.stderr, r.err)
+	}
+
+	Version = "v0.1.5"
+	if r := run(t, srv, "", "upgrade"); r.err != nil || !strings.Contains(r.stderr, "is the latest version") {
+		t.Fatalf("stderr %q err %v", r.stderr, r.err)
+	}
+
+	Version = "dev"
+	if r := run(t, srv, "", "upgrade"); r.err == nil || !strings.Contains(r.err.Error(), "pantech upgrade v0.1.5") {
+		t.Fatalf("a dev build: err %v", r.err)
+	}
+}
+
+func TestUpdateNotice(t *testing.T) {
+	oldVersion := Version
+	t.Cleanup(func() { Version = oldVersion })
+	Version = "v0.1.4"
+	var errOut bytes.Buffer
+	a := &app{out: &output.Printer{Out: &bytes.Buffer{}, Err: &errOut}}
+	found := make(chan string, 1)
+	found <- "v0.1.5"
+	a.updateNotice(found)
+	if !strings.Contains(errOut.String(), "pantech v0.1.5 is out (you have v0.1.4)") {
+		t.Fatalf("stderr %q", errOut.String())
+	}
+	errOut.Reset()
+	found <- "v0.1.4"
+	a.updateNotice(found)
+	if errOut.Len() != 0 {
+		t.Fatalf("a notice with nothing newer: %q", errOut.String())
 	}
 }

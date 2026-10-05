@@ -36,10 +36,16 @@ type app struct {
 	// apiURL replaces the production API, for tests only: there is no flag
 	// or variable for it.
 	apiURL string
+
+	newerVersion <-chan string
 }
 
-// NewRoot builds the command tree.
-func NewRoot() *cobra.Command { return newRoot(&app{}) }
+// NewRoot builds the command tree. Call notice once the command has
+// finished, and printed any error, to say if a newer version is out.
+func NewRoot() (root *cobra.Command, notice func()) {
+	a := &app{}
+	return newRoot(a), func() { a.updateNotice(a.newerVersion) }
+}
 
 // newRoot builds the command tree around a; tests pass one with a printer
 // and an API URL of their own.
@@ -67,6 +73,7 @@ Sign in with "pantech auth login". In CI, set PANTECH_API_KEY instead.`,
 				a.out = output.New(a.jsonOut, a.quiet)
 			}
 			a.out.JSON, a.out.Quiet = a.jsonOut, a.quiet
+			a.newerVersion = a.startUpdateCheck(cmd)
 			return nil
 		},
 	}
@@ -93,6 +100,7 @@ Sign in with "pantech auth login". In CI, set PANTECH_API_KEY instead.`,
 		newRegionsCmd(a),
 		newOperationsCmd(a),
 		newAPICmd(a),
+		newUpgradeCmd(a),
 	)
 	markUsageErrors(root)
 	return root

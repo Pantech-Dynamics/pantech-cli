@@ -25,6 +25,15 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - name: CHANGELOG.md has this version
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          case "$VERSION" in
+            *-*) echo "a pre-release: no changelog section needed" ;;
+            *) grep -q "^## $VERSION " CHANGELOG.md || { echo "::error::CHANGELOG.md has no '## $VERSION' section: add it on main, then tag again"; exit 1; } ;;
+          esac
+
       - run: go test -race ./...
 
       - run: bash -n install.sh

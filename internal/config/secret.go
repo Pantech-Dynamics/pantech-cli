@@ -11,7 +11,6 @@ import (
 
 const keyringService = "pantech-cli"
 
-// Where a key was stored.
 const (
 	InKeychain = "keychain"
 	InFile     = "file"

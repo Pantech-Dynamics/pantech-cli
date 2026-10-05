@@ -24,7 +24,6 @@ const DefaultBaseURL = "https://api.pantechdynamics.com"
 
 const prefix = "/public/v1"
 
-// Client calls the public API with one API key.
 type Client struct {
 	BaseURL   string // e.g. https://api.pantechdynamics.com, no trailing slash
 	Key       string // PAN_…
@@ -35,7 +34,6 @@ type Client struct {
 	Retries int
 }
 
-// New returns a client with sensible timeouts.
 func New(baseURL, key, userAgent string) *Client {
 	return &Client{
 		BaseURL:   strings.TrimRight(baseURL, "/"),
@@ -46,7 +44,6 @@ func New(baseURL, key, userAgent string) *Client {
 	}
 }
 
-// Problem is an error response: the API's problem document.
 type Problem struct {
 	Status    int    `json:"status"`
 	Code      string `json:"code"`
@@ -108,7 +105,6 @@ func (p *Problem) fieldErrorsDetail() string {
 	return strings.Join(parts, "; ") + "."
 }
 
-// IsCode reports whether err is a Problem with the given code.
 func IsCode(err error, code string) bool {
 	var p *Problem
 	return errors.As(err, &p) && p.Code == code
@@ -122,11 +118,9 @@ type Request struct {
 	Body   any // marshalled as JSON when not nil; a json.RawMessage is sent as is
 }
 
-// Response is what came back: the status and the raw body, for --json.
 type Response struct {
-	Status int
-	Body   []byte
-	// retryAfter is the Retry-After header, when the API sent one.
+	Status     int
+	Body       []byte
 	retryAfter time.Duration
 }
 
@@ -236,7 +230,6 @@ func (c *Client) retryAfter(attempt int, res *Response, err error) (time.Duratio
 	return 0, false
 }
 
-// NetworkError is a request that never got an answer.
 type NetworkError struct{ Err error }
 
 func (e *NetworkError) Error() string {

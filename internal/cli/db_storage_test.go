@@ -136,7 +136,7 @@ func TestDBSnapshots(t *testing.T) {
 	}
 }
 
-const vmPrivateBody = `{"id":"vm_1","name":"web-1","plan_id":"p","image_id":"i","zone":"af-abj-1","security_group_id":"sg_web","private_ipv4":"102.211.122.77","desired_state":"running","observed_state":"running","private_network_state":"attached","private_network_ip":"10.250.0.9","tags":{}}`
+const vmPrivateBody = `{"id":"vm_1","name":"web-1","plan_id":"p","image_id":"i","zone":"af-abj-1","security_group_id":"sg_web","private_ipv4":"203.0.113.77","desired_state":"running","observed_state":"running","private_network_state":"attached","private_network_ip":"10.250.0.9","tags":{}}`
 
 func TestVMPrivateNetworkAttach(t *testing.T) {
 	f, srv := newFakeAPI(t)
@@ -147,7 +147,7 @@ func TestVMPrivateNetworkAttach(t *testing.T) {
 	if r.err != nil {
 		t.Fatal(r.err)
 	}
-	if r.stdout != "10.250.0.9\n" || !strings.Contains(r.stderr, "pantech db access-rules set <database> 10.250.0.9/32") {
+	if r.stdout != "10.250.0.9\n" || !strings.Contains(r.stderr, "pantech db access-rules add <database> 10.250.0.9/32") {
 		t.Fatalf("stdout %q stderr %q", r.stdout, r.stderr)
 	}
 	if len(f.sent("GET", "/operations/op_7")) == 0 {
@@ -165,7 +165,7 @@ func TestVMPrivateNetworkAttachRefusedBySecurityGroup(t *testing.T) {
 	if !errors.As(r.err, &p) || p.Code != "SECURITY_GROUP_ALLOWS_PRIVATE_NETWORK" {
 		t.Fatalf("err = %v, want the API's problem", r.err)
 	}
-	for _, want := range []string{msg, "(SECURITY_GROUP_ALLOWS_PRIVATE_NETWORK, request req_5)", "See: pantech security-groups rules set sg_web"} {
+	for _, want := range []string{msg, "(SECURITY_GROUP_ALLOWS_PRIVATE_NETWORK, request req_5)", "pantech security-groups rules remove sg_web", "pantech security-groups rules add sg_web"} {
 		if !strings.Contains(r.err.Error(), want) {
 			t.Fatalf("%q lacks %q", r.err.Error(), want)
 		}

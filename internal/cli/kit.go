@@ -162,7 +162,6 @@ func deleteCmd(a *app, k kind, warning string, resolveRef func(*cobra.Command, *
 	return cmd
 }
 
-// state is a resource's observed state, with where it is heading when that differs.
 func state(out *output.Printer, observed, desired string) string {
 	s := out.State(observed)
 	if desired != "" && desired != observed && desired != "present" {
@@ -171,7 +170,6 @@ func state(out *output.Printer, observed, desired string) string {
 	return s
 }
 
-// newOrdersCmd is "orders list|get" for instance or database orders.
 func newOrdersCmd(a *app, path, what string) *cobra.Command {
 	noun := what
 	if what != "VM" {

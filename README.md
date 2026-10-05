@@ -46,13 +46,13 @@ pantech vm list | get | create | start | stop | reboot | delete | ssh    (alias:
 pantech vm private-network attach | detach
 pantech vm orders list | get
 pantech db engines | list | get | create | start | stop | delete          (alias: database)
-pantech db access-rules set | security-groups set | password set | password reset | orders list | get
+pantech db access-rules set | add | remove | security-groups set | password set | password reset | orders list | get
 pantech db storage resize | snapshots list | get | create | delete
 pantech volumes list | get | create | attach | detach | delete
 pantech snapshots list | get | create | delete
 pantech networks list | get | create | delete | subnets list | create | delete
 pantech public-ips list | get | create | delete
-pantech security-groups list | get | create | delete | rules set
+pantech security-groups list | get | create | delete | rules set | add | remove
 pantech ssh-keys list | add | delete
 pantech plans | images | regions
 pantech operations get | wait
@@ -73,7 +73,13 @@ pass `--no-wait`.
 
 `pantech vm ssh` opens port 22 to your address for 15 minutes through the API
 (SSH access is closed by default), then runs your own `ssh`; `--revoke` closes it
-again when the session ends.
+again when the session ends, even one ended with Ctrl+C. When the platform will
+not open access (the VM shares its security group with another, or the key is
+read-only), it says why and connects to the VM's address directly, which works
+if the security group already allows port 22 from you.
+
+`rules set` and `access-rules set` replace the whole list; `add` and `remove`
+change only the rules given and keep the rest.
 
 Database passwords are never taken as an argument: `--password-stdin` reads one
 from a hidden prompt or a pipe. A password the platform generates (on `db create`
@@ -93,8 +99,9 @@ its zone's private database network and prints the address to allow on a
 database as a `/32` access rule. The VM's security group must allow nothing
 from that network's range (the zone's `private network` in `pantech regions`); when it does, the CLI prints the API's message,
 naming the rules to narrow, and how to change them with
-`pantech security-groups rules set`. `vm get` shows the interface and its
-address.
+`pantech security-groups rules remove` and `rules add`. `vm get` shows the
+interface and its address; allow it on a database with
+`pantech db access-rules add`.
 
 Every API error is printed with the API's own message, each invalid field and
 what it must be (on a `422`), and the error code and request id to quote to
@@ -128,9 +135,8 @@ The CLI always signs in through `https://console.pantechdynamics.com` and calls
 another config directory, and `PANTECH_NO_KEYRING=1` keeps it out of your
 keychain, for testing.
 
-The console's half of the sign-in is specified in
-[`docs/cli-auth-protocol.md`](docs/cli-auth-protocol.md): the routes, parameters,
-PKCE check and token format pantech-console must implement.
+The sign-in protocol, both the CLI's half and pantech-console's, is described in
+[`docs/cli-auth-protocol.md`](docs/cli-auth-protocol.md).
 
 ## Releasing
 

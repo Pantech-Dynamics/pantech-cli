@@ -49,8 +49,6 @@ type Instance struct {
 	CreatedAt *string  `json:"created_at"`
 }
 
-// InVPC reports whether the VM sits in a VPC subnet. One that does not is a
-// standard VM, behind a security group.
 func (v *Instance) InVPC() bool { return v.SubnetID != nil && *v.SubnetID != "" }
 
 // Address is the VM's address reachable from outside, or "" if it has none:
@@ -114,7 +112,6 @@ type SSHKey struct {
 	PrivateKey string `json:"private_key,omitempty"`
 }
 
-// Accepted is a write's 202: the operation to follow.
 type Accepted struct {
 	OperationID string `json:"operation_id"`
 	ResourceID  string `json:"resource_id"`
@@ -130,7 +127,6 @@ type Operation struct {
 	Failure      *Failure `json:"failure"`
 }
 
-// Done reports whether the operation has finished, either way.
 func (o *Operation) Done() bool { return o.Status == "succeeded" || o.Status == "failed" }
 
 // Order is paying for and then provisioning a new instance or database.
@@ -148,19 +144,16 @@ type Order struct {
 	CreatedAt     *string `json:"created_at"`
 }
 
-// InstanceOrder is creating an instance: paying, then provisioning.
 type InstanceOrder = Order
 
 // DatabaseOrder is creating a database: paying, then provisioning. It never
 // carries a password.
 type DatabaseOrder = Order
 
-// Done reports whether the order has finished, either way.
 func (o *Order) Done() bool {
 	return o.Status == "provisioned" || o.Status == "failed" || o.Status == "payment_failed"
 }
 
-// ResourceID is the instance or database the order creates.
 func (o *Order) ResourceID() string {
 	if o.InstanceID != "" {
 		return o.InstanceID
@@ -168,7 +161,6 @@ func (o *Order) ResourceID() string {
 	return o.DatabaseID
 }
 
-// Page is a list response.
 type Page[T any] struct {
 	Data       []T     `json:"data"`
 	NextCursor *string `json:"next_cursor"`
@@ -198,8 +190,6 @@ func ListAll[T any](ctx context.Context, c *Client, path string, query url.Value
 // PollInterval is how often Wait* asks. The API suggests 2–5 seconds.
 var PollInterval = 2 * time.Second
 
-// WaitOperation polls an operation until it finishes, calling onUpdate on
-// every change of status. A failed operation is returned with an error.
 func WaitOperation(ctx context.Context, c *Client, id string, onUpdate func(*Operation)) (*Operation, error) {
 	last := ""
 	for {
@@ -225,8 +215,6 @@ func WaitOperation(ctx context.Context, c *Client, id string, onUpdate func(*Ope
 	}
 }
 
-// WaitOrder polls an instance order until it is provisioned or fails. An
-// order that fails is returned with an *OrderFailed.
 func WaitOrder(ctx context.Context, c *Client, id string, onUpdate func(*InstanceOrder)) (*InstanceOrder, error) {
 	return waitOrder(ctx, c, "/instance-orders/", id, onUpdate)
 }
@@ -278,8 +266,6 @@ func (e *OrderFailed) Error() string {
 	return fmt.Sprintf("order %s did not provision: %s", e.Order.ID, code)
 }
 
-// orderFailureText says what an order's failure_code means. Codes not here
-// are shown as they are.
 var orderFailureText = map[string]string{
 	"payment_expired":      "it was not paid within an hour",
 	"organization_deleted": "it was cancelled because its organization was deleted; any payment taken is back in your credit",
@@ -289,11 +275,8 @@ var orderFailureText = map[string]string{
 	"provisioning_failed":  "provisioning could not start; any payment taken is back in your credit",
 }
 
-// OperationFailed is an operation that finished with status failed.
 type OperationFailed struct{ Op *Operation }
 
-// Error carries the API's own reason, which already says what to do next,
-// and the operation id to quote to support.
 func (e *OperationFailed) Error() string {
 	if e.Op.Failure != nil {
 		return fmt.Sprintf("%s failed: %s (%s, operation %s)", e.Op.Kind, e.Op.Failure.Reason, e.Op.Failure.Code, e.Op.ID)

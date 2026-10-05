@@ -54,7 +54,6 @@ func (s *Steps) Start(label string) {
 // an empty detail shows how long it took.
 func (s *Steps) Done(label, detail string) { s.end(green, "✓", label, detail) }
 
-// Fail ends the current stage with ✗.
 func (s *Steps) Fail(label, detail string) { s.end(red, "✗", label, detail) }
 
 // Mark records a stage that happened at once, with ✓ and a detail.
@@ -83,7 +82,6 @@ func (s *Steps) end(style, glyph, label, detail string) {
 	fmt.Fprintf(s.p.Err, "  %s %s%s\n", paint(s.p.errColor, style, glyph), pad(label), paint(s.p.errColor, dim, detail))
 }
 
-// halt stops the spinner and clears its line.
 func (s *Steps) halt() {
 	if s.stop == nil {
 		return

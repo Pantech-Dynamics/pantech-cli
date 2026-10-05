@@ -45,7 +45,6 @@ func get(ctx context.Context, url string) ([]byte, error) {
 	return io.ReadAll(io.LimitReader(res.Body, 200<<20))
 }
 
-// Latest is the newest released version, e.g. "v0.1.5".
 func Latest(ctx context.Context) (string, error) {
 	body, err := get(ctx, BaseURL+"/latest.txt")
 	if err != nil {
@@ -77,7 +76,6 @@ func Newer(current, latest string) bool {
 	return false
 }
 
-// IsRelease reports whether v is a release version, not "dev" or a commit.
 func IsRelease(v string) bool {
 	_, ok := parse(v)
 	return ok && !strings.Contains(v, "-g")
@@ -101,7 +99,6 @@ func parse(v string) ([3]int, bool) {
 	return out, true
 }
 
-// Platform is this build's archive suffix, e.g. darwin_arm64.
 func Platform() string { return runtime.GOOS + "_" + runtime.GOARCH }
 
 // Install downloads version, checks it against the release's SHA256SUMS
@@ -189,7 +186,6 @@ func replace(exe string, bin []byte) error {
 	return os.Rename(tmp.Name(), exe)
 }
 
-// ErrNotWritable is a binary in a directory the user cannot write to.
 var ErrNotWritable = errors.New("not writable")
 
 // State is the last check for a newer version, kept between runs so the
@@ -199,10 +195,8 @@ type State struct {
 	Latest    string    `json:"latest"`
 }
 
-// CheckInterval is how long a check is trusted.
 const CheckInterval = 24 * time.Hour
 
-// LoadState reads the state at path; a missing or broken file is an old check.
 func LoadState(path string) State {
 	var s State
 	if data, err := os.ReadFile(path); err == nil {

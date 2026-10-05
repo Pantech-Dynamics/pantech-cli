@@ -263,7 +263,6 @@ read and written back without them, so run one change to a group at a time.`
 	return cmd
 }
 
-// parseRules reads DIRECTION:PROTOCOL:PORTS:CIDR rules.
 func parseRules(specs []string) ([]api.SecurityGroupRule, error) {
 	rules := make([]api.SecurityGroupRule, 0, len(specs))
 	for _, spec := range specs {
@@ -294,7 +293,6 @@ func parseRules(specs []string) ([]api.SecurityGroupRule, error) {
 	return rules, nil
 }
 
-// formatRule is a rule as people read it: tcp 443 from 0.0.0.0/0.
 func formatRule(r api.SecurityGroupRule) string {
 	s := r.Protocol
 	if r.PortRange != "" {

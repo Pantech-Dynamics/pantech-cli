@@ -128,8 +128,6 @@ func privateNetworkHint(cmd *cobra.Command, c *api.Client, vmID string, err erro
 		"  pantech security-groups rules add " + group + " --rule ingress:tcp:22:<your address>/32"}
 }
 
-// privateNetworkCIDR is the private database network range of zone, from
-// the regions list; "" when not known.
 func privateNetworkCIDR(cmd *cobra.Command, c *api.Client, zone *string) string {
 	if zone == nil || *zone == "" {
 		return ""

@@ -126,7 +126,6 @@ func newVMGetCmd(a *app) *cobra.Command {
 	}
 }
 
-// vmDetail is one VM: name and state, then what it is, where, and how to reach it.
 func vmDetail(out *output.Printer, vm *api.Instance) output.Detail {
 	state := out.State(vm.ObservedState)
 	if vm.DesiredState != "" && vm.DesiredState != vm.ObservedState && vm.DesiredState != "present" {
@@ -172,7 +171,6 @@ func vmDetail(out *output.Printer, vm *api.Instance) output.Detail {
 	return d
 }
 
-// count is "1 VM", "4 VMs".
 func count(n int, noun string) string {
 	if n == 1 {
 		return fmt.Sprintf("1 %s", noun)
@@ -362,7 +360,6 @@ func planPrice(cmd *cobra.Command, c *api.Client, slug, placement string) string
 	return priceOf(findPlan(cmd, c, slug, placement))
 }
 
-// findPlan is the plan with slug at placement; nil when it cannot be read.
 func findPlan(cmd *cobra.Command, c *api.Client, slug, placement string) *api.Plan {
 	plans, err := api.ListAll[api.Plan](ctx(cmd), c, "/plans", url.Values{"placement": {placement}})
 	if err != nil {
@@ -376,7 +373,6 @@ func findPlan(cmd *cobra.Command, c *api.Client, slug, placement string) *api.Pl
 	return nil
 }
 
-// priceOf is a plan's monthly estimate; "" when it is not known.
 func priceOf(p *api.Plan) string {
 	if p == nil || p.Price == nil {
 		return ""
@@ -394,7 +390,6 @@ func money(minor int64, currency string) string {
 	return fmt.Sprintf("%s %s.%02d", currency, s, cents)
 }
 
-// verb is how a change reads while it happens and once it has.
 type verb struct{ ing, ed string }
 
 func newVMPowerCmd(a *app, action, short, question string, v verb) *cobra.Command {
@@ -646,8 +641,6 @@ func (a *app) revokeSSHAccess(cmd *cobra.Command, c *api.Client, vmID, grantID s
 
 var revokeTimeout = 30 * time.Second
 
-// sshArgv is the ssh command line for a grant: user@host, its port when it
-// is not 22, then the caller's own arguments.
 func sshArgv(user string, grant *api.SSHAccessGrant, extra []string) []string {
 	argv := []string{"ssh"}
 	if grant.Port != nil && *grant.Port != 0 && *grant.Port != 22 {
@@ -657,7 +650,6 @@ func sshArgv(user string, grant *api.SSHAccessGrant, extra []string) []string {
 	return append(argv, extra...)
 }
 
-// defaultUser is the usual cloud user of an image, by its slug.
 func defaultUser(image *string) string {
 	if image == nil {
 		return "root"
@@ -670,7 +662,6 @@ func defaultUser(image *string) string {
 	return "root"
 }
 
-// resolveVM takes an id (vm_…) or a name and returns the id.
 func resolveVM(cmd *cobra.Command, c *api.Client, ref string) (string, error) {
 	if strings.HasPrefix(ref, "vm_") {
 		return ref, nil

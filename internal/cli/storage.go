@@ -347,7 +347,6 @@ func newSnapshotsCreateCmd(a *app) *cobra.Command {
 	return cmd
 }
 
-// snapshotSource is what a snapshot is of: "vm web-1" or "volume data".
 func snapshotSource(s *api.Snapshot) string {
 	switch {
 	case s.InstanceID != nil:
@@ -369,7 +368,6 @@ func firstSet(ss ...*string) *string {
 	return nil
 }
 
-// size is bytes for people: 1.9 GB.
 func size(b int64) string {
 	switch {
 	case b <= 0:

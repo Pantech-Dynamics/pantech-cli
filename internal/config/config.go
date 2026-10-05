@@ -1,4 +1,4 @@
-// Package config keeps the CLI's profiles (which API, which organization)
+// Package config keeps the CLI's profiles (which organization)
 // in ~/.config/pantech/config.json, and each profile's API key in the OS
 // keychain, or in a file only you can read where there is none.
 package config
@@ -12,10 +12,8 @@ import (
 	"sort"
 )
 
-// DefaultProfile is the profile used when none is named.
 const DefaultProfile = "default"
 
-// Profile is one place the CLI can act and the organization its key belongs to.
 type Profile struct {
 	OrganizationID   string   `json:"organization_id,omitempty"`
 	OrganizationName string   `json:"organization_name,omitempty"`
@@ -24,7 +22,6 @@ type Profile struct {
 	ExpiresAt        string   `json:"expires_at,omitempty"`
 }
 
-// Config is the whole file.
 type Config struct {
 	// Current is the profile used when --profile is not given.
 	Current  string             `json:"current,omitempty"`
@@ -77,7 +74,6 @@ func Load() (*Config, error) {
 	return cfg, nil
 }
 
-// Save writes the config, readable only by you.
 func (c *Config) Save() error {
 	p, err := path()
 	if err != nil {
@@ -105,7 +101,6 @@ func (c *Config) Name(asked string) string {
 	}
 }
 
-// Names lists the profiles, sorted.
 func (c *Config) Names() []string {
 	names := make([]string, 0, len(c.Profiles))
 	for n := range c.Profiles {

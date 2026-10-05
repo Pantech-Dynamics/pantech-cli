@@ -20,10 +20,8 @@ import (
 // Version is set at build time: -ldflags "-X …/internal/cli.Version=v0.1.0".
 var Version = "dev"
 
-// DefaultConsoleURL is where `pantech auth login` signs in.
 const DefaultConsoleURL = "https://console.pantechdynamics.com"
 
-// app is what every command shares: the flags, the config and a printer.
 type app struct {
 	profile string
 	jsonOut bool
@@ -47,8 +45,6 @@ func NewRoot() (root *cobra.Command, notice func()) {
 	return newRoot(a), func() { a.updateNotice(a.newerVersion) }
 }
 
-// newRoot builds the command tree around a; tests pass one with a printer
-// and an API URL of their own.
 func newRoot(a *app) *cobra.Command {
 	root := &cobra.Command{
 		Use:   "pantech",
@@ -106,7 +102,6 @@ Sign in with "pantech auth login". In CI, set PANTECH_API_KEY instead.`,
 	return root
 }
 
-// usageError is the command used wrongly: a bad flag or the wrong arguments.
 type usageError struct {
 	err error
 	cmd *cobra.Command
@@ -123,10 +118,8 @@ func IsUsage(err error) bool {
 	return errors.As(err, &u) || strings.HasPrefix(err.Error(), "unknown command")
 }
 
-// IsNotSignedIn reports whether err is there being no key to use.
 func IsNotSignedIn(err error) bool { return errors.Is(err, errNotSignedIn) }
 
-// markUsageErrors wraps every command's flag and argument errors as usage errors.
 func markUsageErrors(cmd *cobra.Command) {
 	cmd.SetFlagErrorFunc(func(c *cobra.Command, err error) error { return &usageError{err, c} })
 	if check := cmd.Args; check != nil {
@@ -142,10 +135,8 @@ func markUsageErrors(cmd *cobra.Command) {
 	}
 }
 
-// profileName is the profile in use.
 func (a *app) profileName() string { return a.cfg.Name(a.profile) }
 
-// baseURL is always the production public API.
 func (a *app) baseURL() string {
 	if a.apiURL != "" {
 		return a.apiURL
@@ -153,7 +144,6 @@ func (a *app) baseURL() string {
 	return api.DefaultBaseURL
 }
 
-// errNotSignedIn is returned by client() when there is no key to use.
 var errNotSignedIn = errors.New(`not signed in: run "pantech auth login", or set PANTECH_API_KEY`)
 
 // client is an API client with the key in effect: $PANTECH_API_KEY, else the profile's.
@@ -196,7 +186,6 @@ func (a *app) confirm(question string) error {
 
 var errCancelled = errors.New("cancelled")
 
-// exitStatus is another program's exit code, passed on as the CLI's own.
 type exitStatus struct{ code int }
 
 func (e *exitStatus) Error() string { return fmt.Sprintf("exit status %d", e.code) }
@@ -211,5 +200,4 @@ func ExitStatus(err error) (int, bool) {
 	return 0, false
 }
 
-// ctx is the command's context.
 func ctx(cmd *cobra.Command) context.Context { return cmd.Context() }

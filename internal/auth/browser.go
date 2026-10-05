@@ -1,7 +1,6 @@
 // Package auth signs the CLI in through the console, the way `gh auth login`
 // does: a browser approval, a loopback callback with a one-time code, and a
-// PKCE-guarded exchange of that code for an API key. The console's half is
-// specified in docs/cli-auth-protocol.md.
+// PKCE-guarded exchange of that code for an API key; docs/cli-auth-protocol.md.
 package auth
 
 import (
@@ -25,7 +24,6 @@ import (
 	"time"
 )
 
-// Grant is what the console hands over: the key and what it is for.
 type Grant struct {
 	APIKey           string   `json:"api_key"`
 	KeyID            string   `json:"key_id"`
@@ -33,16 +31,12 @@ type Grant struct {
 	OrganizationName *string  `json:"organization_name"`
 	Scopes           []string `json:"scopes"`
 	ExpiresAt        string   `json:"expires_at"`
-	// The API the console talks to; a CLI signed in there calls the same one.
+	// Ignored: the CLI always calls the production API.
 	APIURL string `json:"api_url"`
 }
 
-// ErrDenied is the approval refused in the browser.
 var ErrDenied = errors.New("the sign-in was cancelled in the browser")
 
-// ErrNotOffered is a console without the CLI sign-in routes (it answers 404
-// for /cli/authorize or /api/cli/token). docs/cli-auth-protocol.md is what
-// the console has to implement.
 var ErrNotOffered = errors.New("this console does not offer browser sign-in for the CLI yet\n" +
 	"Create an API key in the console under Organization › API keys and run:\n" +
 	"  pantech auth login --with-token < key.txt")
@@ -87,14 +81,12 @@ func (b *Browser) probe(ctx context.Context) error {
 	return nil
 }
 
-// Browser runs one sign-in.
 type Browser struct {
 	ConsoleURL string // e.g. https://console.pantechdynamics.com
 	Host       string // this machine's name, for the key's name
 	HTTP       *http.Client
 	// Open opens a URL in the browser; nil means only Prompt is called.
-	Open func(string) error
-	// Prompt tells the person where to go, before waiting.
+	Open   func(string) error
 	Prompt func(authorizeURL string, opened bool)
 	// Timeout for the whole approval. Default 5 minutes.
 	Timeout time.Duration
@@ -103,7 +95,6 @@ type Browser struct {
 	Verify func(context.Context, *Grant) error
 }
 
-// Login waits for the approval and returns the grant.
 func (b *Browser) Login(ctx context.Context) (*Grant, error) {
 	if err := b.probe(ctx); err != nil {
 		return nil, err
@@ -224,7 +215,6 @@ func (b *Browser) Login(ctx context.Context) (*Grant, error) {
 	return grant, nil
 }
 
-// exchange trades the one-time code and the verifier for the key.
 func (b *Browser) exchange(ctx context.Context, code, verifier string) (*Grant, error) {
 	body, _ := json.Marshal(map[string]string{"code": code, "code_verifier": verifier})
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(b.ConsoleURL, "/")+"/api/cli/token", bytes.NewReader(body))
@@ -264,7 +254,6 @@ func (b *Browser) exchange(ctx context.Context, code, verifier string) (*Grant, 
 	return &grant, nil
 }
 
-// OpenBrowser opens a URL with the system's handler.
 func OpenBrowser(target string) error {
 	var cmd *exec.Cmd
 	switch runtime.GOOS {

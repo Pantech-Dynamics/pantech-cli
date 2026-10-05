@@ -56,8 +56,15 @@ pantech security-groups list | get | create | delete | rules set
 pantech ssh-keys list | add | delete
 pantech plans | images | regions
 pantech operations get | wait
+pantech upgrade [version] [--check]                       (alias: update)
 pantech api <METHOD> <path> [--data JSON] [-f key=value]   anything else in the API
 ```
+
+`pantech upgrade` replaces the CLI with the latest release, after checking the
+download against the release's `SHA256SUMS`. When a newer version is out, the
+CLI says so after a command, checking at most once a day; not in CI, not when
+stderr is not a terminal, not with `--json` or `--quiet`, and never with
+`PANTECH_NO_UPDATE_NOTIFIER=1`.
 
 Every command takes `--json` (the API's own JSON), `--quiet` (ids only) and `--yes`
 (no question before something that deletes or costs money; required when there

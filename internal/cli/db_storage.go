@@ -11,8 +11,6 @@ import (
 	"github.com/Pantech-Dynamics/pantech-cli/internal/output"
 )
 
-// A database's data disk: growing it, and snapshots of it.
-
 func newDBStorageCmd(a *app) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "storage",
@@ -70,8 +68,6 @@ has completed. Until then "pantech db get" shows the size it is growing to.`,
 	return cmd
 }
 
-// checkStorageGrowth refuses, before anything is sent, a size the platform
-// would refuse: storage only grows, one resize at a time.
 func checkStorageGrowth(d *api.Database, ref string, storageGB int) error {
 	if d.PendingDataVolumeSizeGB != nil {
 		return fmt.Errorf("the storage of %s is already growing to %d GB: wait for that to finish\nSee: pantech db get %s", ref, *d.PendingDataVolumeSizeGB, ref)
@@ -82,13 +78,10 @@ func checkStorageGrowth(d *api.Database, ref string, storageGB int) error {
 	return nil
 }
 
-// dbSnapshotKind is the snapshots of one database.
 func dbSnapshotKind(dbID, dbRef string) kind {
 	return kind{prefix: "snap_", path: "/databases/" + url.PathEscape(dbID) + "/snapshots", noun: "snapshot", listCmd: "pantech db snapshots list " + dbRef}
 }
 
-// resolveDBSnapshot takes a database and one of its snapshots, each by id or
-// name, and returns their ids.
 func resolveDBSnapshot(cmd *cobra.Command, c *api.Client, dbRef, snapRef string) (string, string, error) {
 	dbID, err := resolveDatabase(cmd, c, dbRef)
 	if err != nil {

@@ -21,8 +21,6 @@ func resolveNetwork(cmd *cobra.Command, c *api.Client, ref string) (string, erro
 	return resolve(cmd, c, networkKind, ref, func(n api.Network) (string, string) { return n.ID, n.Name })
 }
 
-// resolveSubnet takes only ids: subnets are listed per network, so a name
-// alone does not say where to look.
 func resolveSubnet(_ *cobra.Command, _ *api.Client, ref string) (string, error) {
 	return ref, nil
 }
@@ -213,7 +211,9 @@ func newSubnetsCmd(a *app) *cobra.Command {
 	create.Flags().BoolVar(&noWait, "no-wait", false, "return the id without waiting")
 	_ = create.MarkFlagRequired("name")
 	_ = create.MarkFlagRequired("cidr")
-	cmd.AddCommand(list, create, deleteCmd(a, subnetKind, "It must have no VMs.", resolveSubnet))
+	remove := deleteCmd(a, subnetKind, "It must have no VMs.", resolveSubnet)
+	remove.Short = "Delete a subnet by ID"
+	cmd.AddCommand(list, create, remove)
 	return cmd
 }
 

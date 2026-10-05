@@ -1,9 +1,12 @@
 package cli
 
 import (
+	"bytes"
+	"strings"
 	"testing"
 
 	"github.com/Pantech-Dynamics/pantech-cli/internal/config"
+	"github.com/Pantech-Dynamics/pantech-cli/internal/output"
 )
 
 func TestMoney(t *testing.T) {
@@ -80,5 +83,31 @@ func TestProductionEndpointsCannotBeOverridden(t *testing.T) {
 	}
 	if flag := login.Flags().Lookup("console-url"); flag != nil {
 		t.Fatalf("--console-url should not exist: %+v", flag)
+	}
+}
+
+// A profile signed in on staging by v0.1.2 or older holds a key the
+// production API refuses as invalid; say why instead of sending it.
+func TestProfileSignedInOnAnotherAPI(t *testing.T) {
+	f, srv := newFakeAPI(t)
+	t.Setenv("PANTECH_CONFIG_DIR", t.TempDir())
+	t.Setenv("PANTECH_NO_KEYRING", "1")
+	if _, err := config.SaveKey("default", "PAN_staging"); err != nil {
+		t.Fatal(err)
+	}
+	var out, errOut bytes.Buffer
+	a := &app{
+		apiURL: srv.URL,
+		cfg:    &config.Config{Profiles: map[string]config.Profile{"default": {APIURL: "https://api-dev.example.test"}}},
+		out:    &output.Printer{Out: &out, Err: &errOut},
+	}
+	root := newRoot(a)
+	root.SetArgs([]string{"auth", "status"})
+	err := root.Execute()
+	if !IsNotSignedIn(err) || !strings.Contains(err.Error(), "signed in on https://api-dev.example.test") || !strings.Contains(err.Error(), "pantech auth login") {
+		t.Fatalf("err = %v", err)
+	}
+	if len(f.sent("GET", "/me")) != 0 {
+		t.Fatal("sent the other API's key to this one")
 	}
 }

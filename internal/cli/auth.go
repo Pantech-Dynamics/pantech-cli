@@ -103,6 +103,7 @@ or skip storing anything and set PANTECH_API_KEY.`,
 					profile.OrganizationName = *grant.OrganizationName
 				}
 			}
+			profile.APIURL = ""
 			profile.KeyID = me.APIKey.ID
 			profile.OrganizationID = me.OrganizationID
 			profile.Scopes = me.APIKey.Scopes

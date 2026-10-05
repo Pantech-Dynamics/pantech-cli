@@ -25,8 +25,10 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	err := cli.NewRoot().ExecuteContext(ctx)
+	root, notice := cli.NewRoot()
+	err := root.ExecuteContext(ctx)
 	if err == nil {
+		notice()
 		return
 	}
 	if errors.Is(err, context.Canceled) {
@@ -38,6 +40,7 @@ func main() {
 		os.Exit(code)
 	}
 	output.New(false, false).Error(err)
+	notice()
 	os.Exit(exitCode(err))
 }
 

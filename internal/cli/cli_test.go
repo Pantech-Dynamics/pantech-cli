@@ -70,7 +70,7 @@ func TestProductionEndpointsCannotBeOverridden(t *testing.T) {
 		t.Fatalf("DefaultConsoleURL = %q, want production console", DefaultConsoleURL)
 	}
 
-	root := NewRoot()
+	root, _ := NewRoot()
 	if flag := root.PersistentFlags().Lookup("api-url"); flag != nil {
 		t.Fatalf("--api-url should not exist: %+v", flag)
 	}

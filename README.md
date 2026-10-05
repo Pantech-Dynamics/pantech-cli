@@ -76,13 +76,15 @@ stdout, and can never be read again.
 A database's data disk is sized with `db create --storage-gb` (default: the
 plan's disk) and only ever grows: `db storage resize <db> --storage-gb N` refuses
 a size that is not larger, waits for the resize, and `db get` shows the size a
-resize in flight is growing to. `db snapshots` takes crash-consistent snapshots
+resize in flight is growing to. Both check the size against the zone's limits
+(minimum, maximum and step, which `db engines` lists with the price per GB)
+before anything is sent; when those cannot be read, the API decides. `db snapshots` takes crash-consistent snapshots
 of the data disk, billed until deleted.
 
 `pantech vm private-network attach <vm>` gives a standard VM an interface on
 its zone's private database network and prints the address to allow on a
 database as a `/32` access rule. The VM's security group must allow nothing
-from that network's range; when it does, the CLI prints the API's message,
+from that network's range (the zone's `private network` in `pantech regions`); when it does, the CLI prints the API's message,
 naming the rules to narrow, and how to change them with
 `pantech security-groups rules set`. `vm get` shows the interface and its
 address.

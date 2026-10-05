@@ -353,16 +353,29 @@ Find plans with "pantech plans", images with "pantech images" and your keys with
 // planPrice is the plan's monthly estimate where it is placed (standard,
 // with its own public IPv4, or vpc, without), formatted, or "" when unknown.
 func planPrice(cmd *cobra.Command, c *api.Client, slug, placement string) string {
+	return priceOf(findPlan(cmd, c, slug, placement))
+}
+
+// findPlan is the plan with slug at placement; nil when it cannot be read.
+func findPlan(cmd *cobra.Command, c *api.Client, slug, placement string) *api.Plan {
 	plans, err := api.ListAll[api.Plan](ctx(cmd), c, "/plans", url.Values{"placement": {placement}})
 	if err != nil {
-		return ""
+		return nil
 	}
-	for _, p := range plans {
-		if p.Slug == slug && p.Price != nil {
-			return money(p.Price.MonthlyEstimateMinor, p.Price.Currency)
+	for i := range plans {
+		if plans[i].Slug == slug {
+			return &plans[i]
 		}
 	}
-	return ""
+	return nil
+}
+
+// priceOf is a plan's monthly estimate; "" when it is not known.
+func priceOf(p *api.Plan) string {
+	if p == nil || p.Price == nil {
+		return ""
+	}
+	return money(p.Price.MonthlyEstimateMinor, p.Price.Currency)
 }
 
 // money formats minor units: 1700000 NGN → NGN 17,000.00.

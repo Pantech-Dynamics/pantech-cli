@@ -174,3 +174,15 @@ func TestProblemRendering(t *testing.T) {
 		})
 	}
 }
+
+// The API builds a 422's detail from its field errors; the CLI lists those
+// one per line, so the detail is not printed again above them.
+func TestProblemFieldErrorsDetailNotRepeated(t *testing.T) {
+	body := `{"title":"Validation failed","status":422,"code":"VALIDATION_FAILED","detail":"storage_gb: must be a multiple of 10 GB; name: A name is required.","request_id":"req_1","errors":[{"field":"storage_gb","code":"INVALID_DATABASE_STORAGE","message":"must be a multiple of 10 GB."},{"field":"name","code":"REQUIRED","message":"A name is required."}]}`
+	c, _ := server(t, []int{422}, body)
+	_, err := c.Do(context.Background(), Request{Method: http.MethodGet, Path: "/x"}, nil)
+	want := "Validation failed\n  storage_gb: must be a multiple of 10 GB.\n  name: A name is required.\n(VALIDATION_FAILED, request req_1)"
+	if err == nil || err.Error() != want {
+		t.Fatalf("Error() = %q, want %q", err, want)
+	}
+}

@@ -120,6 +120,22 @@ type DatabaseEngine struct {
 		EOLDate *string  `json:"eol_date"`
 		Zones   []string `json:"zones"`
 	} `json:"versions"`
+	// Storage is the data disk sizes a new database may have, one entry per
+	// zone where the engine can be created and storage is offered.
+	Storage []DatabaseStorageOption `json:"storage"`
+}
+
+// DatabaseStorageOption is one zone's allowed data disk sizes for an engine.
+// MinGB 0 means the plan's disk_gb is the minimum; otherwise the minimum is
+// the larger of the two. Above the minimum a size is a multiple of StepGB.
+type DatabaseStorageOption struct {
+	ZoneID               string  `json:"zone_id"`
+	MinGB                int     `json:"min_gb"`
+	MinIsPlanDisk        bool    `json:"min_is_plan_disk"`
+	MaxGB                int     `json:"max_gb"`
+	StepGB               int     `json:"step_gb"`
+	PricePerGBMonthMinor *int64  `json:"price_per_gb_month_minor"`
+	Currency             *string `json:"currency"`
 }
 
 // DatabaseAccessRule allows TCP to the engine's port from one CIDR.

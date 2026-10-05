@@ -13,21 +13,16 @@ import (
 	"github.com/Pantech-Dynamics/pantech-cli/internal/output"
 )
 
-// Shared pieces of the resource commands: list, look up by id or name, and
-// create through an operation.
-
 // kind describes one resource the CLI names: its id prefix, where its list
 // lives, and how a person refers to it.
 type kind struct {
-	prefix  string // "vol_"
-	path    string // "/volumes"
-	noun    string // "volume"
-	listCmd string // "pantech volumes list"
-	// noSearch: the list takes no q= filter, so a name is found in the whole list.
+	prefix   string // "vol_"
+	path     string // "/volumes"
+	noun     string // "volume"
+	listCmd  string // "pantech volumes list"
 	noSearch bool
 }
 
-// listItems reads a whole list, decoded for a table and as sent for --json.
 func listItems[T any](cmd *cobra.Command, c *api.Client, path string, q url.Values) ([]T, []json.RawMessage, error) {
 	raw, err := api.ListAllRaw(ctx(cmd), c, path, q)
 	if err != nil {
@@ -42,8 +37,6 @@ func listItems[T any](cmd *cobra.Command, c *api.Client, path string, q url.Valu
 	return items, raw, nil
 }
 
-// printList handles --json (the API's items), --quiet (ids) and an empty
-// list; false means the caller prints a table.
 func printList[T any](a *app, items []T, raw []json.RawMessage, id func(T) string, empty, next string) bool {
 	switch {
 	case a.out.JSON:
@@ -66,8 +59,6 @@ func printList[T any](a *app, items []T, raw []json.RawMessage, id func(T) strin
 	return true
 }
 
-// resolve takes an id (with the kind's prefix) or a name and returns the id,
-// listing with q= to find the name.
 func resolve[T any](cmd *cobra.Command, c *api.Client, k kind, ref string, idName func(T) (string, string)) (string, error) {
 	if strings.HasPrefix(ref, k.prefix) {
 		return ref, nil
@@ -96,8 +87,6 @@ func resolve[T any](cmd *cobra.Command, c *api.Client, k kind, ref string, idNam
 	}
 }
 
-// getOne reads one resource, printing the API's body with --json; ok is
-// false when it was printed and the caller has nothing more to do.
 func getOne(a *app, cmd *cobra.Command, c *api.Client, path string, out any) (bool, error) {
 	body, err := api.Get(ctx(cmd), c, path, out)
 	if err != nil {
@@ -110,8 +99,6 @@ func getOne(a *app, cmd *cobra.Command, c *api.Client, path string, out any) (bo
 	return true, nil
 }
 
-// runCreate sends a create that answers with an operation, follows it, and
-// prints the new resource's id on stdout.
 func (a *app) runCreate(cmd *cobra.Command, c *api.Client, req api.Request, noWait bool, subject string) error {
 	var accepted api.Accepted
 	res, err := c.Do(ctx(cmd), req, &accepted)
@@ -145,7 +132,6 @@ func (a *app) runCreate(cmd *cobra.Command, c *api.Client, req api.Request, noWa
 	return nil
 }
 
-// deleteCmd is "delete <ref>": confirm, DELETE, follow the operation.
 func deleteCmd(a *app, k kind, warning string, resolveRef func(*cobra.Command, *api.Client, string) (string, error)) *cobra.Command {
 	var noWait bool
 	cmd := &cobra.Command{
@@ -187,7 +173,6 @@ func state(out *output.Printer, observed, desired string) string {
 
 // newOrdersCmd is "orders list|get" for instance or database orders.
 func newOrdersCmd(a *app, path, what string) *cobra.Command {
-	// "VM" stays in capitals mid-sentence; "Database" does not.
 	noun := what
 	if what != "VM" {
 		noun = strings.ToLower(what)

@@ -18,10 +18,6 @@ import (
 	"github.com/Pantech-Dynamics/pantech-cli/internal/output"
 )
 
-// Managed databases. A database password is never put in argv, a file, the
-// config or a log: it is read from stdin, and one the platform generates is
-// printed once, on stdout alone, the only time the API ever returns it.
-
 var databaseKind = kind{prefix: "db_", path: "/databases", noun: "database", listCmd: "pantech db list"}
 
 func resolveDatabase(cmd *cobra.Command, c *api.Client, ref string) (string, error) {
@@ -158,7 +154,6 @@ func newDBGetCmd(a *app) *cobra.Command {
 	}
 }
 
-// dbDetail is one database: what it is, where to connect, and who may.
 func dbDetail(out *output.Printer, d *api.Database) output.Detail {
 	endpoint := "—"
 	if d.Hostname != nil && *d.Hostname != "" {
@@ -193,8 +188,6 @@ func dbDetail(out *output.Printer, d *api.Database) output.Detail {
 			{{"Created", output.When(d.CreatedAt)}},
 		},
 	}
-	// With groups attached, what the database actually allows, and what of
-	// the groups it ignores.
 	if len(d.SecurityGroupIDs) > 0 {
 		var applied []output.Pair
 		for _, r := range d.EffectiveAccessRules {
@@ -218,7 +211,6 @@ func dbDetail(out *output.Printer, d *api.Database) output.Detail {
 	return det
 }
 
-// dbStorage is the data disk's size, and the size a resize in flight grows it to.
 func dbStorage(out *output.Printer, d *api.Database) string {
 	s := fmt.Sprintf("%d GB", d.DataVolumeSizeGB)
 	if d.PendingDataVolumeSizeGB != nil && *d.PendingDataVolumeSizeGB != d.DataVolumeSizeGB {
@@ -227,8 +219,6 @@ func dbStorage(out *output.Printer, d *api.Database) string {
 	return s
 }
 
-// connectCommand is the engine's own client, pointed at the database; it
-// asks for the password itself.
 func connectCommand(d *api.Database) string {
 	if d.Engine == "postgresql" {
 		return fmt.Sprintf("psql \"host=%s port=%d user=%s dbname=postgres sslmode=require\"", *d.Hostname, d.Port, d.AdminUsername)
@@ -302,8 +292,6 @@ Find engines and versions with "pantech db engines", plans with
 			}
 
 			question := fmt.Sprintf("Create database %s (%s %s, %s)?", name, engine, version, size)
-			// Priced as a VM of the same plan with no public address. More
-			// storage than the plan's costs more, which the plan's price leaves out.
 			if price := planPrice(cmd, c, plan, "vpc"); price != "" {
 				amount := "about " + price
 				if storageGB > 0 {
@@ -320,8 +308,6 @@ Find engines and versions with "pantech db engines", plans with
 			if err != nil {
 				return err
 			}
-			// The password first, before anything that can fail or be
-			// interrupted: it cannot be read again.
 			if !a.out.JSON {
 				a.showPassword(accepted.AdminUsername, accepted.Password, accepted.PasswordReturned, password != "", accepted.DatabaseID)
 			}
@@ -342,7 +328,6 @@ Find engines and versions with "pantech db engines", plans with
 			d, dbBody, err := a.waitDatabase(cmd, c, name, &accepted)
 			if err != nil {
 				if a.out.JSON {
-					// The create response is the only place the password ever is.
 					a.out.RawJSON(res.Body)
 				}
 				return err
@@ -379,8 +364,6 @@ Find engines and versions with "pantech db engines", plans with
 	return cmd
 }
 
-// waitDatabase follows a database order to provisioned, then the operation
-// that provisions it, and reads the database.
 func (a *app) waitDatabase(cmd *cobra.Command, c *api.Client, name string, accepted *api.DatabaseOrderAccepted) (*api.Database, []byte, error) {
 	steps := a.out.Steps()
 	steps.Mark("Ordered "+name, money(accepted.AmountMinor, accepted.Currency))
@@ -418,15 +401,12 @@ func (a *app) waitDatabase(cmd *cobra.Command, c *api.Client, name string, accep
 	return &d, body, nil
 }
 
-// showPassword prints a generated password once, alone on stdout, with what
-// it is on stderr; or says why there is none to show.
 func (a *app) showPassword(user string, password *string, returned, chosen bool, dbRef string) {
 	switch {
 	case returned && password != nil && *password != "":
 		a.out.Note("Admin password for %s, shown once and never again. Save it now:", user)
 		a.out.Line("%s", *password)
 	case chosen:
-		// The one you chose: nothing to show.
 	default:
 		a.out.Warn("The generated password was returned to an earlier attempt of this request and cannot be shown again. Set a new one: pantech db password reset %s", dbRef)
 	}
@@ -656,12 +636,8 @@ database must be running.`,
 	return cmd
 }
 
-// stdin is where passwords are read from; tests replace it.
 var stdin io.Reader = os.Stdin
 
-// readPassword reads a database password from stdin: at a hidden prompt
-// (twice, to catch a typo) when stdin is a terminal, else its first line.
-// It is checked against the platform's rule before anything is sent.
 func readPassword(confirm bool) (string, error) {
 	var password string
 	if f, ok := stdin.(*os.File); ok && term.IsTerminal(int(f.Fd())) {
@@ -693,9 +669,6 @@ func readPassword(confirm bool) (string, error) {
 	return password, checkPassword(password)
 }
 
-// checkPassword is the platform's rule for a password you choose: 16 to 128
-// printable ASCII characters with no space, quote, double quote or
-// backslash. The error never repeats the password.
 func checkPassword(p string) error {
 	if len(p) < 16 || len(p) > 128 {
 		return fmt.Errorf("the password must be 16 to 128 characters (it is %d)", len(p))

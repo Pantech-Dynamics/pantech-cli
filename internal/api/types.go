@@ -8,9 +8,6 @@ import (
 	"time"
 )
 
-// The public API's resources, as much of each as the CLI shows. --json
-// prints the API's own body, so fields left out here are never lost.
-
 type Me struct {
 	OrganizationID string `json:"organization_id"`
 	ProjectID      string `json:"project_id"`
@@ -28,26 +25,22 @@ type Failure struct {
 }
 
 type Instance struct {
-	ID          string  `json:"id"`
-	Name        string  `json:"name"`
-	PlanSlug    *string `json:"plan_slug"`
-	ImageSlug   *string `json:"image_slug"`
-	Region      *string `json:"region"`
-	Zone        *string `json:"zone"`
-	NetworkID   *string `json:"network_id"`
-	SubnetID    *string `json:"subnet_id"`
-	PublicIPv4  *string `json:"public_ipv4"`
-	PrivateIPv4 *string `json:"private_ipv4"`
-	// SecurityGroupID is the group of a standard VM.
-	SecurityGroupID *string `json:"security_group_id"`
-	// PrivateNetworkState is the VM's interface on its zone's private
-	// database network: none, attaching, attached or detaching.
-	PrivateNetworkState string `json:"private_network_state"`
-	// PrivateNetworkIP is that interface's address once attached.
-	PrivateNetworkIP *string `json:"private_network_ip"`
-	DesiredState     string  `json:"desired_state"`
-	ObservedState    string  `json:"observed_state"`
-	Spec             *struct {
+	ID                  string  `json:"id"`
+	Name                string  `json:"name"`
+	PlanSlug            *string `json:"plan_slug"`
+	ImageSlug           *string `json:"image_slug"`
+	Region              *string `json:"region"`
+	Zone                *string `json:"zone"`
+	NetworkID           *string `json:"network_id"`
+	SubnetID            *string `json:"subnet_id"`
+	PublicIPv4          *string `json:"public_ipv4"`
+	PrivateIPv4         *string `json:"private_ipv4"`
+	SecurityGroupID     *string `json:"security_group_id"`
+	PrivateNetworkState string  `json:"private_network_state"`
+	PrivateNetworkIP    *string `json:"private_network_ip"`
+	DesiredState        string  `json:"desired_state"`
+	ObservedState       string  `json:"observed_state"`
+	Spec                *struct {
 		VCPU     int `json:"vcpu"`
 		MemoryMB int `json:"memory_mb"`
 		DiskGB   int `json:"disk_gb"`

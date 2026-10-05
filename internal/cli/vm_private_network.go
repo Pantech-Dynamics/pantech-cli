@@ -11,10 +11,6 @@ import (
 	"github.com/Pantech-Dynamics/pantech-cli/internal/output"
 )
 
-// A standard VM's second interface, on its zone's private database network,
-// through which it reaches managed databases by their private address.
-
-// privateNetwork is the interface's state, with its address once it has one.
 func privateNetwork(out *output.Printer, vm *api.Instance) string {
 	s := vm.PrivateNetworkState
 	if vm.PrivateNetworkIP != nil && *vm.PrivateNetworkIP != "" {
@@ -112,8 +108,6 @@ its address, and the interface from the guest's network configuration.`,
 	return cmd
 }
 
-// privateNetworkHint keeps the API's own message for a security group that
-// would open the VM to the private network, and adds how to narrow it.
 func privateNetworkHint(cmd *cobra.Command, c *api.Client, vmID string, err error) error {
 	if !api.IsCode(err, "SECURITY_GROUP_ALLOWS_PRIVATE_NETWORK") {
 		return err
@@ -152,8 +146,6 @@ func privateNetworkCIDR(cmd *cobra.Command, c *api.Client, zone *string) string 
 	return ""
 }
 
-// hinted is an error with a line of advice after it; errors.As still finds
-// what it wraps, so the exit code is the wrapped error's.
 type hinted struct {
 	err  error
 	hint string

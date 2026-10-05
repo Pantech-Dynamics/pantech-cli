@@ -32,28 +32,41 @@ type app struct {
 
 	cfg *config.Config
 	out *output.Printer
+
+	// apiURL replaces the production API, for tests only: there is no flag
+	// or variable for it.
+	apiURL string
 }
 
 // NewRoot builds the command tree.
-func NewRoot() *cobra.Command {
-	a := &app{}
+func NewRoot() *cobra.Command { return newRoot(&app{}) }
+
+// newRoot builds the command tree around a; tests pass one with a printer
+// and an API URL of their own.
+func newRoot(a *app) *cobra.Command {
 	root := &cobra.Command{
 		Use:   "pantech",
 		Short: "Manage Pantech Dynamics cloud from your terminal",
-		Long: `Manage Pantech Dynamics cloud from your terminal: virtual machines, SSH keys
-and the catalogue, through the public API.
+		Long: `Manage Pantech Dynamics cloud from your terminal: virtual machines, managed
+databases, volumes, snapshots, networks, security groups, SSH keys and the
+catalogue, through the public API.
 
 Sign in with "pantech auth login". In CI, set PANTECH_API_KEY instead.`,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		Version:       Version,
 		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
-			cfg, err := config.Load()
-			if err != nil {
-				return err
+			if a.cfg == nil {
+				cfg, err := config.Load()
+				if err != nil {
+					return err
+				}
+				a.cfg = cfg
 			}
-			a.cfg = cfg
-			a.out = output.New(a.jsonOut, a.quiet)
+			if a.out == nil {
+				a.out = output.New(a.jsonOut, a.quiet)
+			}
+			a.out.JSON, a.out.Quiet = a.jsonOut, a.quiet
 			return nil
 		},
 	}
@@ -68,6 +81,12 @@ Sign in with "pantech auth login". In CI, set PANTECH_API_KEY instead.`,
 	root.AddCommand(
 		newAuthCmd(a),
 		newVMCmd(a),
+		newDBCmd(a),
+		newVolumesCmd(a),
+		newSnapshotsCmd(a),
+		newNetworksCmd(a),
+		newPublicIPsCmd(a),
+		newSecurityGroupsCmd(a),
 		newSSHKeysCmd(a),
 		newPlansCmd(a),
 		newImagesCmd(a),
@@ -119,7 +138,12 @@ func markUsageErrors(cmd *cobra.Command) {
 func (a *app) profileName() string { return a.cfg.Name(a.profile) }
 
 // baseURL is always the production public API.
-func (a *app) baseURL() string { return api.DefaultBaseURL }
+func (a *app) baseURL() string {
+	if a.apiURL != "" {
+		return a.apiURL
+	}
+	return api.DefaultBaseURL
+}
 
 // errNotSignedIn is returned by client() when there is no key to use.
 var errNotSignedIn = errors.New(`not signed in: run "pantech auth login", or set PANTECH_API_KEY`)
@@ -163,6 +187,21 @@ func (a *app) confirm(question string) error {
 }
 
 var errCancelled = errors.New("cancelled")
+
+// exitStatus is another program's exit code, passed on as the CLI's own.
+type exitStatus struct{ code int }
+
+func (e *exitStatus) Error() string { return fmt.Sprintf("exit status %d", e.code) }
+
+// ExitStatus reports the exit code of a program the CLI ran in the
+// foreground (ssh), which main exits with silently.
+func ExitStatus(err error) (int, bool) {
+	var e *exitStatus
+	if errors.As(err, &e) {
+		return e.code, true
+	}
+	return 0, false
+}
 
 // ctx is the command's context.
 func ctx(cmd *cobra.Command) context.Context { return cmd.Context() }

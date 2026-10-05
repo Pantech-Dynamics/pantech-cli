@@ -1,7 +1,7 @@
 // Package auth signs the CLI in through the console, the way `gh auth login`
 // does: a browser approval, a loopback callback with a one-time code, and a
 // PKCE-guarded exchange of that code for an API key. The console's half is
-// contracts/cli-auth.ts in pantech-console.
+// specified in docs/cli-auth-protocol.md.
 package auth
 
 import (
@@ -40,6 +40,53 @@ type Grant struct {
 // ErrDenied is the approval refused in the browser.
 var ErrDenied = errors.New("the sign-in was cancelled in the browser")
 
+// ErrNotOffered is a console without the CLI sign-in routes (it answers 404
+// for /cli/authorize or /api/cli/token). docs/cli-auth-protocol.md is what
+// the console has to implement.
+var ErrNotOffered = errors.New("this console does not offer browser sign-in for the CLI yet\n" +
+	"Create an API key in the console under Organization › API keys and run:\n" +
+	"  pantech auth login --with-token < key.txt")
+
+// ErrGated is a console behind an access gate (pantech-console's staging
+// gate answers the CLI's cookie-less requests with a redirect to
+// /staging-access or a 401). Browser sign-in cannot finish there by design.
+var ErrGated = errors.New("this console is behind an access gate (staging), so browser sign-in for the CLI is not available here\n" +
+	"Create an API key in the console under Organization › API keys and run:\n" +
+	"  pantech auth login --with-token < key.txt")
+
+// probe asks the console whether it has the authorize page, so a console
+// without the CLI sign-in fails at once instead of after a browser shows a
+// 404 and the wait times out. Only a 404 counts: any other answer, or none,
+// is left to the sign-in itself.
+func (b *Browser) probe(ctx context.Context) error {
+	probeCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(probeCtx, http.MethodGet, strings.TrimRight(b.ConsoleURL, "/")+"/cli/authorize", nil)
+	if err != nil {
+		return nil
+	}
+	client := &http.Client{
+		Timeout: 10 * time.Second,
+		// A redirect (to the console's sign-in page) means the route exists.
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
+	if b.HTTP != nil {
+		client.Transport = b.HTTP.Transport
+	}
+	res, err := client.Do(req)
+	if err != nil {
+		return nil
+	}
+	_ = res.Body.Close()
+	if res.StatusCode == http.StatusNotFound {
+		return ErrNotOffered
+	}
+	if strings.Contains(res.Header.Get("Location"), "/staging-access") || res.StatusCode == http.StatusUnauthorized {
+		return ErrGated
+	}
+	return nil
+}
+
 // Browser runs one sign-in.
 type Browser struct {
 	ConsoleURL string // e.g. https://console.pantechdynamics.com
@@ -58,6 +105,9 @@ type Browser struct {
 
 // Login waits for the approval and returns the grant.
 func (b *Browser) Login(ctx context.Context) (*Grant, error) {
+	if err := b.probe(ctx); err != nil {
+		return nil, err
+	}
 	verifier := randomString(32)
 	state := randomString(24)
 	sum := sha256.Sum256([]byte(verifier))
@@ -154,7 +204,7 @@ func (b *Browser) Login(ctx context.Context) (*Grant, error) {
 	select {
 	case <-wait.Done():
 		if errors.Is(wait.Err(), context.DeadlineExceeded) {
-			return nil, fmt.Errorf("no approval within %s: run pantech auth login again", timeout)
+			return nil, fmt.Errorf("no approval within %s: run pantech auth login again\nIf the browser showed \"page not found\", sign in with a key instead: pantech auth login --with-token < key.txt", timeout)
 		}
 		return nil, wait.Err()
 	case r := <-results:
@@ -192,6 +242,12 @@ func (b *Browser) exchange(ctx context.Context, code, verifier string) (*Grant, 
 	}
 	defer res.Body.Close()
 	data, _ := io.ReadAll(io.LimitReader(res.Body, 1<<20))
+	if res.StatusCode == http.StatusNotFound {
+		return nil, ErrNotOffered
+	}
+	if res.StatusCode == http.StatusUnauthorized {
+		return nil, ErrGated
+	}
 	if res.StatusCode != http.StatusOK {
 		var problem struct {
 			Detail string `json:"detail"`

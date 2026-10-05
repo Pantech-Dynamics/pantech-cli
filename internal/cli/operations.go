@@ -106,8 +106,8 @@ func newAPICmd(a *app) *cobra.Command {
 		Short: "Call any public API endpoint directly",
 		Long: `Call any public API endpoint directly, with your key, an Idempotency-Key on
 writes and the CLI's retries. The path is relative to /public/v1. The answer is
-printed as JSON. For everything the CLI has no command for yet: networks,
-public IPs, volumes, snapshots, usage.
+printed as JSON. For everything the CLI has no command for yet: usage,
+snapshot schedules, firewall and port forwarding rules, disk offerings.
 
 --data takes JSON, or @file, or @- for stdin.
 

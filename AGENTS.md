@@ -31,6 +31,9 @@ install.sh          what https://pantechdynamics.com/install serves
 - **Ask before anything that deletes or costs money** (`app.confirm`), and honour
   `--yes`. With no terminal, refuse rather than guess.
 - **stdout is for results, stderr for progress and hints**, so output pipes cleanly.
-- **The sign-in has a second half in pantech-console** (`contracts/cli-auth.ts`,
-  `app/api/cli/token`). A change to the exchange is a change to both.
+- **The sign-in has a second half in pantech-console** (`/cli/authorize`,
+  `/api/cli/token`), specified in `docs/cli-auth-protocol.md`. A change to the
+  exchange is a change to both, and to that document.
+- **Passwords never in argv, files, config or logs.** Read them from stdin
+  (`--password-stdin`); print a generated one once, alone on stdout.
 - **No attribution trailers** in commits or pull requests.

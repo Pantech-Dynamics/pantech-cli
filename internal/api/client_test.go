@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -118,5 +119,58 @@ func TestListAllFollowsCursors(t *testing.T) {
 	got, err := ListAll[SSHKey](context.Background(), New(srv.URL, "PAN_test", "test"), "/ssh-keys", nil)
 	if err != nil || len(got) != 2 || got[0].ID != "a" || got[1].ID != "b" {
 		t.Fatalf("got %+v, %v", got, err)
+	}
+}
+
+func TestProblemRendering(t *testing.T) {
+	for _, c := range []struct {
+		name, body string
+		status     int
+		want       []string
+	}{
+		{
+			name:   "validation, with field errors",
+			status: 422,
+			body:   `{"type":"https://api.pantechdynamics.com/problems/validation-failed","title":"Validation failed","status":422,"code":"VALIDATION_FAILED","detail":"The request has invalid fields.","request_id":"req_1","errors":[{"field":"storage_gb","code":"INVALID_DATABASE_STORAGE","message":"Must be larger than the current 20 GB."},{"field":"","code":"UNKNOWN","message":"Something about the whole body."}]}`,
+			want:   []string{"The request has invalid fields.", "\n  storage_gb: Must be larger than the current 20 GB.", "\n  Something about the whole body.", "(VALIDATION_FAILED, request req_1)"},
+		},
+		{
+			name:   "a conflict's own message",
+			status: 409,
+			body:   `{"type":"about:blank","title":"Conflict","status":409,"code":"SECURITY_GROUP_ALLOWS_PRIVATE_NETWORK","detail":"Security group web allows 0.0.0.0/0 (ingress tcp 22).","request_id":"req_2"}`,
+			want:   []string{"Security group web allows 0.0.0.0/0 (ingress tcp 22).", "(SECURITY_GROUP_ALLOWS_PRIVATE_NETWORK, request req_2)"},
+		},
+		{
+			name:   "only a title",
+			status: 409,
+			body:   `{"title":"Something conflicts"}`,
+			want:   []string{"Something conflicts"},
+		},
+		{
+			name:   "only field errors",
+			status: 422,
+			body:   `{"errors":[{"field":"name","code":"REQUIRED","message":"A name is required."}]}`,
+			want:   []string{"name: A name is required."},
+		},
+		{
+			name:   "a field error with no message names its code",
+			status: 422,
+			body:   `{"code":"VALIDATION_FAILED","detail":"Invalid.","errors":[{"field":"name","code":"REQUIRED"}]}`,
+			want:   []string{"name: REQUIRED"},
+		},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			cl, _ := server(t, []int{c.status}, c.body)
+			_, err := cl.Do(context.Background(), Request{Method: http.MethodGet, Path: "/x"}, nil)
+			var p *Problem
+			if !errors.As(err, &p) || p.Status != c.status {
+				t.Fatalf("err = %v", err)
+			}
+			for _, w := range c.want {
+				if !strings.Contains(err.Error(), w) {
+					t.Fatalf("%q lacks %q", err.Error(), w)
+				}
+			}
+		})
 	}
 }

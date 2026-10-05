@@ -32,6 +32,11 @@ func main() {
 	if errors.Is(err, context.Canceled) {
 		os.Exit(130)
 	}
+	// A command that ran another program (ssh) exits with its code, having
+	// nothing of its own to say.
+	if code, ok := cli.ExitStatus(err); ok {
+		os.Exit(code)
+	}
 	output.New(false, false).Error(err)
 	os.Exit(exitCode(err))
 }
@@ -39,6 +44,7 @@ func main() {
 func exitCode(err error) int {
 	var problem *api.Problem
 	var failed *api.OperationFailed
+	var orderFailed *api.OrderFailed
 	switch {
 	case cli.IsNotSignedIn(err):
 		return 3
@@ -46,7 +52,7 @@ func exitCode(err error) int {
 		return 3
 	case errors.As(err, &problem) && problem.Status == 404:
 		return 4
-	case errors.As(err, &failed):
+	case errors.As(err, &failed), errors.As(err, &orderFailed):
 		return 5
 	case cli.IsUsage(err):
 		return 2

@@ -122,3 +122,58 @@ func TestLoginTimesOut(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+// A console without the CLI routes answers 404: the CLI says to use a key,
+// at once, without opening a browser.
+func TestLoginNotOfferedByTheConsole(t *testing.T) {
+	console := httptest.NewServer(http.NotFoundHandler())
+	t.Cleanup(console.Close)
+	b := &Browser{ConsoleURL: console.URL, Timeout: time.Second, Open: func(string) error {
+		t.Error("the browser must not open when the console has no sign-in page")
+		return nil
+	}}
+	_, err := b.Login(context.Background())
+	if !errors.Is(err, ErrNotOffered) || !strings.Contains(err.Error(), "--with-token") {
+		t.Fatalf("err = %v, want ErrNotOffered naming --with-token", err)
+	}
+}
+
+// The page exists but the token route does not: the exchange's 404 says the same.
+func TestExchangeNotOfferedByTheConsole(t *testing.T) {
+	console := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/cli/authorize" {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	t.Cleanup(console.Close)
+	page := make(chan string, 1)
+	var challenge string
+	b := &Browser{ConsoleURL: console.URL, Open: func(authorize string) error {
+		return approve(t, authorize, func(state string) url.Values { return url.Values{"state": {state}, "code": {"the-code"}} }, page, &challenge)
+	}}
+	if _, err := b.Login(context.Background()); !errors.Is(err, ErrNotOffered) {
+		t.Fatalf("err = %v, want ErrNotOffered", err)
+	}
+	if p := <-page; !strings.Contains(p, "Sign-in failed") {
+		t.Fatalf("callback page: %s", p)
+	}
+}
+
+// A staging console behind its access gate redirects the cookie-less probe to
+// /staging-access: the CLI says so at once and never opens the browser.
+func TestLoginGatedConsoleSaysUseWithToken(t *testing.T) {
+	console := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/staging-access?next=%2Fcli%2Fauthorize", http.StatusFound)
+	}))
+	t.Cleanup(console.Close)
+	b := &Browser{ConsoleURL: console.URL, Timeout: time.Second, Open: func(string) error {
+		t.Error("the browser must not open behind an access gate")
+		return nil
+	}}
+	_, err := b.Login(context.Background())
+	if !errors.Is(err, ErrGated) || !strings.Contains(err.Error(), "--with-token") {
+		t.Fatalf("err = %v, want ErrGated naming --with-token", err)
+	}
+}

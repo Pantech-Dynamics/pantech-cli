@@ -45,8 +45,11 @@ func LoadKey(profile string) (string, error) {
 
 // DeleteKey removes a profile's key from wherever it is. The keychain is
 // asked best-effort: "not there" and "no keychain on this machine" read alike.
+// With PANTECH_NO_KEYRING set it is left alone, like SaveKey and LoadKey do.
 func DeleteKey(profile string) error {
-	_ = keyring.Delete(keyringService, profile)
+	if os.Getenv("PANTECH_NO_KEYRING") == "" {
+		_ = keyring.Delete(keyringService, profile)
+	}
 	return deleteFileKey(profile)
 }
 

@@ -71,7 +71,15 @@ func (p *Problem) Error() string {
 	var b strings.Builder
 	b.WriteString(msg)
 	for _, e := range p.Errors {
-		fmt.Fprintf(&b, "\n  %s: %s", e.Field, e.Message)
+		text := e.Message
+		if text == "" {
+			text = e.Code
+		}
+		if e.Field == "" {
+			fmt.Fprintf(&b, "\n  %s", text)
+		} else {
+			fmt.Fprintf(&b, "\n  %s: %s", e.Field, text)
+		}
 	}
 	if p.Code != "" {
 		fmt.Fprintf(&b, "\n(%s", p.Code)
@@ -221,7 +229,10 @@ func (e *NetworkError) Unwrap() error { return e.Err }
 
 func problemFrom(res *Response) error {
 	p := &Problem{Status: res.Status}
-	if err := json.Unmarshal(res.Body, p); err != nil || (p.Code == "" && p.Detail == "") {
+	// A problem document is kept whatever part of it came: a code, a
+	// detail, a title or field errors. Anything else is shown as sent.
+	if err := json.Unmarshal(res.Body, p); err != nil || (p.Code == "" && p.Detail == "" && p.Title == "" && len(p.Errors) == 0) {
+		*p = Problem{}
 		p.Detail = strings.TrimSpace(string(res.Body))
 		if len(p.Detail) > 300 || p.Detail == "" {
 			p.Detail = http.StatusText(res.Status)

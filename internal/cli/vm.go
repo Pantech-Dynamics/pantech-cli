@@ -32,6 +32,7 @@ func newVMCmd(a *app) *cobra.Command {
 		newVMPowerCmd(a, "reboot", "Reboot a VM", "Reboot %s? Anything running on it is interrupted.", verb{"Rebooting", "Rebooted"}),
 		newVMDeleteCmd(a),
 		newVMSSHCmd(a),
+		newOrdersCmd(a, "/instance-orders", "VM"),
 	)
 	return cmd
 }
@@ -55,12 +56,13 @@ func newVMListCmd(a *app) *cobra.Command {
 			if search != "" {
 				q.Set("q", search)
 			}
-			vms, err := api.ListAll[api.Instance](ctx(cmd), c, "/instances", q)
+			vms, raw, err := listItems[api.Instance](cmd, c, "/instances", q)
 			if err != nil {
 				return err
 			}
 			if a.out.JSON {
-				a.out.Value(vms)
+				// The API's items as sent, not the fields the table uses.
+				printList(a, vms, raw, func(vm api.Instance) string { return vm.ID }, "", "")
 				return nil
 			}
 			if a.out.Quiet {
@@ -156,7 +158,7 @@ func vmDetail(out *output.Printer, vm *api.Instance) output.Detail {
 		d.Sections = append(d.Sections, []output.Pair{{"Failed", vm.Failure.Reason + out.Dim(" ("+vm.Failure.Code+")")}})
 	}
 	switch {
-	case vm.ObservedState == "running" && vm.Address() != "":
+	case vm.ObservedState == "running":
 		d.Next = [][2]string{{"Connect", "pantech vm ssh " + vm.Name}}
 	case vm.ObservedState == "stopped":
 		d.Next = [][2]string{{"Start it", "pantech vm start " + vm.Name}}
@@ -203,7 +205,8 @@ func memory(mb int) string {
 }
 
 func newVMCreateCmd(a *app) *cobra.Command {
-	var name, plan, image, sshKey, region, subnet string
+	var name, plan, image, sshKey, region, subnet, securityGroup string
+	var tags map[string]string
 	var noWait bool
 	cmd := &cobra.Command{
 		Use:   "create",
@@ -234,12 +237,27 @@ Find plans with "pantech plans", images with "pantech images" and your keys with
 			if region != "" {
 				body["region"] = region
 			}
+			placement := "standard"
 			if subnet != "" {
 				body["subnet_id"] = subnet
+				placement = "vpc"
+			}
+			if securityGroup != "" {
+				if subnet != "" {
+					return errors.New("--security-group is for a standard VM: a VM in a VPC subnet is protected by the subnet's firewall rules")
+				}
+				id, err := resolveSecurityGroup(cmd, c, securityGroup)
+				if err != nil {
+					return err
+				}
+				body["security_group_id"] = id
+			}
+			if len(tags) > 0 {
+				body["tags"] = tags
 			}
 
 			question := fmt.Sprintf("Create %s (%s, %s)?", name, plan, image)
-			if price := planPrice(cmd, c, plan); price != "" {
+			if price := planPrice(cmd, c, plan, placement); price != "" {
 				question = fmt.Sprintf("Create %s (%s, %s) for about %s a month?", name, plan, image, price)
 			}
 			if err := a.confirm(question); err != nil {
@@ -258,11 +276,15 @@ Find plans with "pantech plans", images with "pantech images" and your keys with
 				return err
 			}
 			if noWait {
-				if a.out.JSON {
+				switch {
+				case a.out.JSON:
 					a.out.RawJSON(res.Body)
-				} else {
+				case a.out.Quiet:
 					a.out.Line("%s", accepted.InstanceID)
-					a.out.Next("Follow it", "pantech api GET /instance-orders/"+accepted.OrderID)
+				default:
+					a.out.Line("order     %s", accepted.OrderID)
+					a.out.Line("instance  %s", accepted.InstanceID)
+					a.out.Next("Follow it", "pantech vm orders get "+accepted.OrderID)
 				}
 				return nil
 			}
@@ -315,6 +337,8 @@ Find plans with "pantech plans", images with "pantech images" and your keys with
 	f.StringVar(&sshKey, "ssh-key", "", "SSH key to install, by id or name")
 	f.StringVar(&region, "region", "", "region code (default: the platform's region)")
 	f.StringVar(&subnet, "subnet", "", "VPC subnet id, for a VM without its own public IPv4")
+	f.StringVar(&securityGroup, "security-group", "", "security group, by id or name, for a standard VM (default: your default group)")
+	f.StringToStringVar(&tags, "tags", nil, "tags as key=value pairs, e.g. --tags env=prod,team=web")
 	f.BoolVar(&noWait, "no-wait", false, "return once ordered, without waiting for it to provision")
 	_ = cmd.MarkFlagRequired("name")
 	_ = cmd.MarkFlagRequired("plan")
@@ -322,9 +346,10 @@ Find plans with "pantech plans", images with "pantech images" and your keys with
 	return cmd
 }
 
-// planPrice is the plan's monthly estimate, formatted, or "" when unknown.
-func planPrice(cmd *cobra.Command, c *api.Client, slug string) string {
-	plans, err := api.ListAll[api.Plan](ctx(cmd), c, "/plans", nil)
+// planPrice is the plan's monthly estimate where it is placed (standard,
+// with its own public IPv4, or vpc, without), formatted, or "" when unknown.
+func planPrice(cmd *cobra.Command, c *api.Client, slug, placement string) string {
+	plans, err := api.ListAll[api.Plan](ctx(cmd), c, "/plans", url.Values{"placement": {placement}})
 	if err != nil {
 		return ""
 	}
@@ -435,13 +460,21 @@ func (a *app) runWrite(cmd *cobra.Command, c *api.Client, req api.Request, noWai
 
 func newVMSSHCmd(a *app) *cobra.Command {
 	var user string
+	var revoke bool
 	cmd := &cobra.Command{
 		Use:   "ssh <vm> [-- ssh arguments]",
-		Short: "SSH into a VM by its address",
-		Long: `SSH into a VM by its address, with your own ssh and keys. The user is the
-image's usual cloud user (ubuntu, debian, rocky; root otherwise); --user changes
-it. Anything after -- goes to ssh.`,
+		Short: "Open SSH access to a VM for 15 minutes and connect",
+		Long: `Open SSH access to a VM and connect, with your own ssh and keys.
+
+Port 22 is closed by default. This asks the platform to open it to your
+address for 15 minutes, waits for that, and connects to the host the grant
+names. The port closes again after 15 minutes; --revoke closes it as soon
+as your session ends.
+
+The user is the image's usual cloud user (ubuntu, debian, rocky; root
+otherwise); --user changes it. Anything after -- goes to ssh.`,
 		Example: `  pantech vm ssh web-1
+  pantech vm ssh web-1 --revoke
   pantech vm ssh web-1 -- -i ~/.ssh/deploy -L 8080:localhost:80`,
 		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -457,25 +490,111 @@ it. Anything after -- goes to ssh.`,
 			if _, err := c.Do(ctx(cmd), api.Request{Method: http.MethodGet, Path: "/instances/" + url.PathEscape(id)}, &vm); err != nil {
 				return err
 			}
-			addr := vm.Address()
-			if addr == "" {
-				return fmt.Errorf("%s has no address reachable from outside: a VM in a VPC is reached through a static IP (pantech api GET /public-ips)", vm.Name)
-			}
-			if user == "" {
-				user = defaultUser(vm.ImageSlug)
-			}
 			sshPath, err := exec.LookPath("ssh")
 			if err != nil {
 				return errors.New("no ssh on your PATH")
 			}
-			argv := append([]string{"ssh", user + "@" + addr}, args[1:]...)
+			grant, err := a.openSSHAccess(cmd, c, &vm)
+			if err != nil {
+				return err
+			}
+			if user == "" {
+				user = defaultUser(vm.ImageSlug)
+			}
+			argv := sshArgv(user, grant, args[1:])
 			a.out.Note("%s", a.out.Dim(strings.Join(argv, " ")))
-			// Replace this process, so ssh owns the terminal and its exit code is ours.
-			return syscall.Exec(sshPath, argv, os.Environ())
+			if !revoke {
+				// Replace this process, so ssh owns the terminal and its exit code is ours.
+				return syscall.Exec(sshPath, argv, os.Environ())
+			}
+			session := exec.Command(sshPath, argv[1:]...)
+			session.Stdin, session.Stdout, session.Stderr = os.Stdin, os.Stdout, os.Stderr
+			runErr := session.Run()
+			if err := a.revokeSSHAccess(cmd, c, vm.ID, grant.ID); err != nil {
+				return fmt.Errorf("the session ended but SSH access is still open until it expires: %w", err)
+			}
+			var exitErr *exec.ExitError
+			if errors.As(runErr, &exitErr) {
+				return &exitStatus{code: exitErr.ExitCode()}
+			}
+			return runErr
 		},
 	}
 	cmd.Flags().StringVarP(&user, "user", "l", "", "user to log in as (default: the image's usual one)")
+	cmd.Flags().BoolVar(&revoke, "revoke", false, "close SSH access as soon as the session ends")
 	return cmd
+}
+
+// openSSHAccess opens port 22 to the caller for 15 minutes, waits for it,
+// and returns the grant, which names the host to connect to.
+func (a *app) openSSHAccess(cmd *cobra.Command, c *api.Client, vm *api.Instance) (*api.SSHAccessGrant, error) {
+	base := "/instances/" + url.PathEscape(vm.ID) + "/ssh-access"
+	var accepted api.Accepted
+	if _, err := c.Do(ctx(cmd), api.Request{Method: http.MethodPost, Path: base}, &accepted); err != nil {
+		return nil, fmt.Errorf("opening SSH access to %s: %w", vm.Name, err)
+	}
+	steps := a.out.Steps()
+	steps.Start("Opening SSH access to " + vm.Name)
+	if accepted.OperationID != "" {
+		if _, err := api.WaitOperation(ctx(cmd), c, accepted.OperationID, nil); err != nil {
+			steps.Fail("", "")
+			return nil, err
+		}
+	}
+	var grant api.SSHAccessGrant
+	if _, err := c.Do(ctx(cmd), api.Request{Method: http.MethodGet, Path: base + "/" + url.PathEscape(accepted.ResourceID)}, &grant); err != nil {
+		steps.Fail("", "")
+		return nil, err
+	}
+	if grant.Status != "active" {
+		steps.Fail("", "")
+		return nil, fmt.Errorf("SSH access to %s is %s, not active (grant %s)", vm.Name, grant.Status, grant.ID)
+	}
+	if grant.Host == nil || *grant.Host == "" {
+		// The grant names the host; a standard VM's own address is the fallback.
+		addr := vm.Address()
+		if addr == "" {
+			steps.Fail("", "")
+			return nil, fmt.Errorf("SSH access to %s is open but has no host to connect to (grant %s)", vm.Name, grant.ID)
+		}
+		grant.Host = &addr
+	}
+	until := ""
+	if grant.ExpiresAt != nil {
+		until = "until " + output.When(grant.ExpiresAt)
+	}
+	steps.Done("SSH access open", until)
+	return &grant, nil
+}
+
+// revokeSSHAccess closes a grant's port and waits for it.
+func (a *app) revokeSSHAccess(cmd *cobra.Command, c *api.Client, vmID, grantID string) error {
+	var accepted api.Accepted
+	path := "/instances/" + url.PathEscape(vmID) + "/ssh-access/" + url.PathEscape(grantID)
+	if _, err := c.Do(ctx(cmd), api.Request{Method: http.MethodDelete, Path: path}, &accepted); err != nil {
+		return err
+	}
+	steps := a.out.Steps()
+	steps.Start("Closing SSH access")
+	if accepted.OperationID != "" {
+		if _, err := api.WaitOperation(ctx(cmd), c, accepted.OperationID, nil); err != nil {
+			steps.Fail("", "")
+			return err
+		}
+	}
+	steps.Done("SSH access closed", "")
+	return nil
+}
+
+// sshArgv is the ssh command line for a grant: user@host, its port when it
+// is not 22, then the caller's own arguments.
+func sshArgv(user string, grant *api.SSHAccessGrant, extra []string) []string {
+	argv := []string{"ssh"}
+	if grant.Port != nil && *grant.Port != 0 && *grant.Port != 22 {
+		argv = append(argv, "-p", fmt.Sprint(*grant.Port))
+	}
+	argv = append(argv, user+"@"+*grant.Host)
+	return append(argv, extra...)
 }
 
 // defaultUser is the usual cloud user of an image, by its slug.

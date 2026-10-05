@@ -1,6 +1,7 @@
 # pantech
 
-The Pantech Dynamics CLI: virtual machines, SSH keys and the catalogue from your
+The Pantech Dynamics CLI: virtual machines, managed databases, volumes,
+snapshots, networks, security groups, SSH keys and the catalogue from your
 terminal, through the [public API](https://docs.pantechdynamics.com/api).
 
 ```sh
@@ -23,6 +24,9 @@ server), in `~/.config/pantech/credentials.json`, readable only by you.
 
 Creating a key needs an owner or admin with two-factor authentication on.
 
+If the console does not offer CLI sign-in yet, `pantech auth login` says so at
+once: sign in with a key instead (below).
+
 Without a browser:
 
 ```sh
@@ -39,6 +43,14 @@ the production console and API.
 ```
 pantech auth login | logout | status
 pantech vm list | get | create | start | stop | reboot | delete | ssh    (alias: instances)
+pantech vm orders list | get
+pantech db engines | list | get | create | start | stop | delete          (alias: database)
+pantech db access-rules set | security-groups set | password set | password reset | orders list | get
+pantech volumes list | get | create | attach | detach | delete
+pantech snapshots list | get | create | delete
+pantech networks list | get | create | delete | subnets list | create | delete
+pantech public-ips list | get | create | delete
+pantech security-groups list | get | create | delete | rules set
 pantech ssh-keys list | add | delete
 pantech plans | images | regions
 pantech operations get | wait
@@ -49,6 +61,15 @@ Every command takes `--json` (the API's own JSON), `--quiet` (ids only) and `--y
 (no question before something that deletes or costs money; required when there
 is no terminal to ask in). Writes wait for their operation to finish unless you
 pass `--no-wait`.
+
+`pantech vm ssh` opens port 22 to your address for 15 minutes through the API
+(SSH access is closed by default), then runs your own `ssh`; `--revoke` closes it
+again when the session ends.
+
+Database passwords are never taken as an argument: `--password-stdin` reads one
+from a hidden prompt or a pipe. A password the platform generates (on `db create`
+without `--password-stdin`, or `db password reset`) is printed once, alone on
+stdout, and can never be read again.
 
 The CLI sends an `Idempotency-Key` with every write and retries network errors,
 429s and 5xxs with the same key, so a retried change never happens twice.
@@ -78,8 +99,9 @@ The CLI always signs in through `https://console.pantechdynamics.com` and calls
 another config directory, and `PANTECH_NO_KEYRING=1` keeps it out of your
 keychain, for testing.
 
-The console's half of the sign-in is in `pantech-console`: `contracts/cli-auth.ts`
-describes the whole exchange.
+The console's half of the sign-in is specified in
+[`docs/cli-auth-protocol.md`](docs/cli-auth-protocol.md): the routes, parameters,
+PKCE check and token format pantech-console must implement.
 
 ## Releasing
 

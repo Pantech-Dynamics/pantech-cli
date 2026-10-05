@@ -150,26 +150,26 @@ type DatabaseIgnoredSecurityGroupRule struct {
 
 // Database is a managed database. It never carries a password.
 type Database struct {
-	ID                 string               `json:"id"`
-	Name               string               `json:"name"`
-	Engine             string               `json:"engine"`
-	Version            string               `json:"version"`
-	Port               int                  `json:"port"`
-	PlanID             string               `json:"plan_id"`
-	DataVolumeSizeGB   int                  `json:"data_volume_size_gb"`
+	ID               string `json:"id"`
+	Name             string `json:"name"`
+	Engine           string `json:"engine"`
+	Version          string `json:"version"`
+	Port             int    `json:"port"`
+	PlanID           string `json:"plan_id"`
+	DataVolumeSizeGB int    `json:"data_volume_size_gb"`
 	// PendingDataVolumeSizeGB is the size a storage resize in flight is
 	// growing the data disk to; nil when none.
-	PendingDataVolumeSizeGB *int `json:"pending_data_volume_size_gb"`
-	ZoneID             string               `json:"zone_id"`
-	SubnetID           *string              `json:"subnet_id"`
-	Hostname           *string              `json:"hostname"`
-	PrivateIP          *string              `json:"private_ip"`
-	AdminUsername      string               `json:"admin_username"`
-	DesiredState       string               `json:"desired_state"`
-	ObservedState      string               `json:"observed_state"`
-	Generation         int                  `json:"generation"`
-	ObservedGeneration int                  `json:"observed_generation"`
-	AccessRules        []DatabaseAccessRule `json:"access_rules"`
+	PendingDataVolumeSizeGB *int                 `json:"pending_data_volume_size_gb"`
+	ZoneID                  string               `json:"zone_id"`
+	SubnetID                *string              `json:"subnet_id"`
+	Hostname                *string              `json:"hostname"`
+	PrivateIP               *string              `json:"private_ip"`
+	AdminUsername           string               `json:"admin_username"`
+	DesiredState            string               `json:"desired_state"`
+	ObservedState           string               `json:"observed_state"`
+	Generation              int                  `json:"generation"`
+	ObservedGeneration      int                  `json:"observed_generation"`
+	AccessRules             []DatabaseAccessRule `json:"access_rules"`
 	// Security groups only add address ranges to the allow-list.
 	SecurityGroupIDs          []string                           `json:"security_group_ids"`
 	EffectiveAccessRules      []DatabaseEffectiveAccessRule      `json:"effective_access_rules"`

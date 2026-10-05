@@ -43,9 +43,11 @@ the production console and API.
 ```
 pantech auth login | logout | status
 pantech vm list | get | create | start | stop | reboot | delete | ssh    (alias: instances)
+pantech vm private-network attach | detach
 pantech vm orders list | get
 pantech db engines | list | get | create | start | stop | delete          (alias: database)
 pantech db access-rules set | security-groups set | password set | password reset | orders list | get
+pantech db storage resize | snapshots list | get | create | delete
 pantech volumes list | get | create | attach | detach | delete
 pantech snapshots list | get | create | delete
 pantech networks list | get | create | delete | subnets list | create | delete
@@ -70,6 +72,24 @@ Database passwords are never taken as an argument: `--password-stdin` reads one
 from a hidden prompt or a pipe. A password the platform generates (on `db create`
 without `--password-stdin`, or `db password reset`) is printed once, alone on
 stdout, and can never be read again.
+
+A database's data disk is sized with `db create --storage-gb` (default: the
+plan's disk) and only ever grows: `db storage resize <db> --storage-gb N` refuses
+a size that is not larger, waits for the resize, and `db get` shows the size a
+resize in flight is growing to. `db snapshots` takes crash-consistent snapshots
+of the data disk, billed until deleted.
+
+`pantech vm private-network attach <vm>` gives a standard VM an interface on
+its zone's private database network and prints the address to allow on a
+database as a `/32` access rule. The VM's security group must allow nothing
+from that network's range; when it does, the CLI prints the API's message,
+naming the rules to narrow, and how to change them with
+`pantech security-groups rules set`. `vm get` shows the interface and its
+address.
+
+Every API error is printed with the API's own message, each invalid field and
+what it must be (on a `422`), and the error code and request id to quote to
+support.
 
 The CLI sends an `Idempotency-Key` with every write and retries network errors,
 429s and 5xxs with the same key, so a retried change never happens twice.

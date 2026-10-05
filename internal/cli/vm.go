@@ -32,6 +32,7 @@ func newVMCmd(a *app) *cobra.Command {
 		newVMPowerCmd(a, "reboot", "Reboot a VM", "Reboot %s? Anything running on it is interrupted.", verb{"Rebooting", "Rebooted"}),
 		newVMDeleteCmd(a),
 		newVMSSHCmd(a),
+		newVMPrivateNetworkCmd(a),
 		newOrdersCmd(a, "/instance-orders", "VM"),
 	)
 	return cmd
@@ -143,6 +144,9 @@ func vmDetail(out *output.Printer, vm *api.Instance) output.Detail {
 	network := []output.Pair{{"Static IP", output.Or(&addr)}}
 	if vm.InVPC() {
 		network = []output.Pair{{"Public IP", output.Or(vm.PublicIPv4)}, {"Private IP", output.Or(vm.PrivateIPv4)}, {"Subnet", *vm.SubnetID}}
+	}
+	if vm.PrivateNetworkState != "" {
+		network = append(network, output.Pair{"Private network", privateNetwork(out, vm)})
 	}
 	d := output.Detail{
 		Title:    vm.Name,

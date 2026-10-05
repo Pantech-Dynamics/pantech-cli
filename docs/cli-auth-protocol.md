@@ -5,17 +5,9 @@ does: the person approves the CLI in their browser, the console sends a one-time
 code to a loopback server the CLI runs, and the CLI trades that code, with a PKCE
 verifier, for a new API key. The key itself never appears in a URL.
 
-This describes the protocol as both sides implement it. The CLI side is
-`internal/auth/browser.go`. The console side is in pantech-console:
-
-| File | What |
-| --- | --- |
-| `contracts/cli-auth.ts` | The request, the approval form, the token request and response, the callback URL |
-| `proxy.ts` (`cliRequest`) | Moves the request off the query string into a cookie |
-| `app/(auth)/cli/authorize/page.tsx`, `app/(auth)/_components/cli-authorize-form.tsx` | The approval page |
-| `server/cli-auth/actions.ts` (`approveCli`) | Creates the key and seals the code |
-| `server/cli-auth/code.ts` | Sealing, opening and spending codes |
-| `app/api/cli/token/route.ts` | The exchange |
+This describes what the CLI and the console send each other. The CLI side is
+`internal/auth/browser.go`; the console's is in pantech-console, which is
+where its implementation is documented.
 
 The CLI always uses `https://console.pantechdynamics.com`.
 
@@ -26,8 +18,8 @@ CLI                                   Browser / console                     Cont
  |  listen on 127.0.0.1:<port>          |                                       |
  |  verifier = random, challenge = S256(verifier), state = random               |
  |--- open GET /cli/authorize?port&state&challenge&host -->|                    |
- |                                      |  proxy.ts: request -> cookie,         |
- |                                      |  redirect to the bare /cli/authorize  |
+ |                                      |  request -> cookie, redirect to the   |
+ |                                      |  bare /cli/authorize                  |
  |                                      |  log in (and back) if needed          |
  |                                      |  on Approve: create API key --------->|
  |                                      |  seal {key, challenge} into the code  |
@@ -54,14 +46,14 @@ The CLI opens, in the person's browser:
 https://console.pantechdynamics.com/cli/authorize?port=53682&state=<state>&challenge=<challenge>&host=<host>
 ```
 
-| Parameter | CLI sends | Console accepts (`CliAuthRequest`) |
+| Parameter | CLI sends | Console accepts |
 | --- | --- | --- |
 | `port` | The loopback port the OS gave. | An integer, `1024`–`65535`. |
 | `state` | 32 characters, base64url without padding (24 random bytes). | 16–128 base64url characters. Echoed back unchanged. |
 | `challenge` | `BASE64URL-NOPAD(SHA-256(code_verifier))`. The method is always S256; there is no `code_challenge_method`. | Exactly 43 base64url characters. |
 | `host` | The machine's hostname, reduced to `[A-Za-z0-9 .@_-]`, at most 60 characters. May be empty. | Trimmed, at most 60 of `[\w .@-]`. Used only to name the key. |
 
-`proxy.ts` takes a `GET /cli/authorize` that has a `challenge` and:
+The console takes a `GET /cli/authorize` that has a `challenge` and:
 
 1. stores its query string in the cookie `pantech-cli-request`: `httpOnly`,
    `SameSite=Lax`, `Secure` behind https, `Path=/cli`, max age 10 minutes;
@@ -81,7 +73,7 @@ Without two-factor authentication on, the person is told to set it up first. The
 API decides who may create keys, as on Organization › API keys, and its refusal
 is shown on the page.
 
-**Approve** runs the `approveCli` server action (10 a minute per person). It:
+**Approve** (rate-limited per person):
 
 1. reads the request from the cookie (gone: "This sign-in request expired");
 2. creates an API key in the person's organization, named `CLI on <host>` (or
@@ -97,29 +89,15 @@ is shown on the page.
 `http://127.0.0.1:<port>/callback?state=<state>&error=access_denied`. Nothing is
 created.
 
-Both callbacks are built by `cliCallback`, always `http://127.0.0.1`, never
-`localhost` or another host.
+Both callbacks are always `http://127.0.0.1`, never `localhost` or another
+host.
 
 ### The code
 
-The code is sealed, not stored. It is the key and what it is for, encrypted with
-the console's session key (`SESSION_ENCRYPTION_KEY`, AES-256-GCM):
-
-```
-{ apiKey, keyId, organizationId, organizationName, scopes, expiresAt,
-  purpose: "pantech-cli-code", challenge, exp: now + 2 minutes, jti: <uuid> }
-```
-
-- `purpose` stops a session cookie, sealed with the same key, from passing for a
-  code.
-- It is good for **two minutes**, and works on any instance and across restarts
-  with nothing stored.
-- It is worth nothing without the verifier, which never leaves the CLI.
-- It is spent once it has been traded **successfully**. Spent `jti`s are kept in
-  process memory until they would have expired anyway. A failed exchange (a
-  wrong verifier) does not spend it. With several console instances, a code
-  could be traded once on each within its two minutes, but only by the holder
-  of the verifier, who already has the key.
+The code carries the key, sealed by the console with authenticated
+encryption and bound to the PKCE challenge, so the console stores nothing.
+It is good for **two minutes**, can be traded **once**, and is worth nothing
+without the verifier, which never leaves the CLI.
 
 ## 3. Callback: `GET http://127.0.0.1:<port>/callback` (served by the CLI)
 
@@ -146,12 +124,10 @@ and no CSRF token, and is exempt from the staging access gate.
 
 The console:
 
-1. rate-limits by client IP: 10 a minute, then `429 RATE_LIMITED` with
-   `Retry-After`;
-2. opens the code: it must decrypt, be a CLI code, be unexpired and unspent, and
-   `BASE64URL-NOPAD(SHA-256(code_verifier))` must equal its challenge (compared in
-   constant time);
-3. spends it and answers `200`, `Cache-Control: no-store`:
+1. rate-limits by client IP, answering `429 RATE_LIMITED` with `Retry-After`;
+2. checks the code is genuine, unexpired and unused, and that
+   `BASE64URL-NOPAD(SHA-256(code_verifier))` equals its challenge;
+3. answers `200`, `Cache-Control: no-store`:
 
 ```json
 {
@@ -173,7 +149,7 @@ The console:
 | `organization_name` | string or null | Shown on sign-in and in `pantech auth status`. |
 | `scopes` | string array | `["read"]` or `["write"]`. |
 | `expires_at` | RFC 3339 string | |
-| `api_url` | string | The API this console talks to (`PANTECH_API_BASE_URL`, no `/public/v1`). The CLI always uses production and ignores it. |
+| `api_url` | string | The API this console talks to, without `/public/v1`. The CLI always uses production and ignores it. |
 
 Every failure is the same `400`, so an expired code, a forged one and a wrong
 verifier cannot be told apart:
@@ -194,13 +170,3 @@ organization in its profile.
 
 The key appears under Organization › API keys like any other, so it can be
 revoked there; `pantech auth logout` only forgets it locally.
-
-## Known gaps
-
-- A key whose code is never traded (the CLI was closed, or the two minutes ran
-  out) is not revoked: it stays under Organization › API keys until it expires
-  or someone revokes it. Nobody holds its secret.
-- Spent codes are remembered per console instance (above).
-- The approval page sets no `Referrer-Policy`. Neither the state nor the code is
-  on its URL (the request is in the cookie, and the code exists only in the
-  callback URL), so there is nothing for a referrer to leak.

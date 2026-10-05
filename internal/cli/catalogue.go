@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Pantech-Dynamics/pantech-cli/internal/api"
+	"github.com/Pantech-Dynamics/pantech-cli/internal/output"
 )
 
 // The catalogue: what you can create. Slugs from here are what vm create takes.
@@ -113,10 +114,10 @@ func newRegionsCmd(a *app) *cobra.Command {
 					if i > 0 {
 						code, name = "", ""
 					}
-					rows = append(rows, []string{code, name, p.Kind, p.Zone, status})
+					rows = append(rows, []string{code, name, p.Kind, p.Zone, status, output.Or(p.PrivateNetworkCIDR)})
 				}
 			}
-			a.out.Table([]string{"region", "name", "placement", "zone", "status"}, rows)
+			a.out.Table([]string{"region", "name", "placement", "zone", "status", "private network"}, rows)
 			return nil
 		},
 	}

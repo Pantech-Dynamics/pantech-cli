@@ -35,3 +35,29 @@ func TestAddressFromProduction(t *testing.T) {
 		t.Fatalf("InVPC=%v Address=%q: a standard VM is reached at its one address", vm.InVPC(), vm.Address())
 	}
 }
+
+func TestOrderFailedExplainsTheCode(t *testing.T) {
+	s := func(v string) *string { return &v }
+	for status, code := range map[string]string{"payment_failed": "organization_deleted", "failed": "organization_deleted"} {
+		err := &OrderFailed{Order: &Order{ID: "ord_1", Status: status, FailureCode: s(code)}}
+		if got := err.Error(); got != "order ord_1 did not provision: it was cancelled because its organization was deleted; any payment taken is back in your credit (organization_deleted)" {
+			t.Errorf("%s: %q", status, got)
+		}
+	}
+	err := &OrderFailed{Order: &Order{ID: "ord_1", Status: "payment_failed", FailureCode: s("payment_expired")}}
+	if got := err.Error(); got != "order ord_1 did not provision: it was not paid within an hour (payment_expired)" {
+		t.Errorf("%q", got)
+	}
+	err = &OrderFailed{Order: &Order{ID: "ord_1", Status: "failed", FailureCode: s("something_new")}}
+	if got := err.Error(); got != "order ord_1 did not provision: something_new" {
+		t.Errorf("unknown codes are shown as they are: %q", got)
+	}
+}
+
+func TestOperationFailedNamesTheOperation(t *testing.T) {
+	op := &Operation{ID: "op_1", Kind: "create_instance", Failure: &Failure{Code: "PROVISIONING_FAILED", Reason: "We couldn't complete this change. Try again; if it keeps failing, contact support with the operation id."}}
+	want := "create_instance failed: We couldn't complete this change. Try again; if it keeps failing, contact support with the operation id. (PROVISIONING_FAILED, operation op_1)"
+	if got := (&OperationFailed{Op: op}).Error(); got != want {
+		t.Fatalf("%q", got)
+	}
+}

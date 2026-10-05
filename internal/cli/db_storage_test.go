@@ -195,3 +195,158 @@ func TestVMGetShowsThePrivateNetwork(t *testing.T) {
 		t.Fatalf("stdout %q err %v", r.stdout, r.err)
 	}
 }
+
+const (
+	enginesWithStorage = `{"data":[{"engine":"postgresql","display_name":"PostgreSQL","port":5432,"versions":[{"version":"18","eol_date":"2030-11-14","zones":["af-abj-1"]}],"storage":[{"zone_id":"af-abj-1","min_gb":0,"min_is_plan_disk":true,"max_gb":2000,"step_gb":10,"price_per_gb_month_minor":14600,"currency":"NGN"},{"zone_id":"af-abj-2","min_gb":50,"min_is_plan_disk":false,"max_gb":1000,"step_gb":25,"price_per_gb_month_minor":null,"currency":null}]}],"next_cursor":null}`
+	plansWithDisk      = `{"data":[{"slug":"starter","disk_gb":25,"price":{"currency":"NGN","monthly_estimate_minor":1500000}}],"next_cursor":null}`
+)
+
+func TestDBCreateStorageCheckedAgainstTheZone(t *testing.T) {
+	for name, c := range map[string]struct {
+		plans, size, want string // want "" means it is sent
+	}{
+		"too large":             {plansWithDisk, "2010", "--storage-gb 2010 is too large: af-abj-1 allows at most 2000 GB"},
+		"below the plan":        {plansWithDisk, "20", "--storage-gb 20 is too small: at least 25 GB (the plan's disk)"},
+		"off the step":          {plansWithDisk, "45", "use 25 GB (the plan's disk) or a multiple of 10 GB above it"},
+		"the plan's size":       {plansWithDisk, "25", ""},
+		"a step above":          {plansWithDisk, "50", ""},
+		"plan unknown, too big": {plansBody, "3000", "at most 2000 GB"},
+		"plan unknown, off step defers to the API": {plansBody, "45", ""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f, srv := newFakeAPI(t)
+			f.on("GET /plans", 200, c.plans).
+				on("GET /database-engines", 200, enginesWithStorage).
+				on("POST /databases", 202, strings.Replace(strings.Replace(dbAccepted, "%s", "false", 1), "%s", "null", 1))
+			r := run(t, srv, "", "db", "create", "--name", "app", "--engine", "postgresql", "--version", "18", "--plan", "starter", "--zone", "af-abj-1", "--yes", "--no-wait", "--storage-gb", c.size)
+			sent := len(f.sent("POST", "/databases")) == 1
+			if c.want == "" {
+				if r.err != nil || !sent {
+					t.Fatalf("err %v, sent %v", r.err, sent)
+				}
+				return
+			}
+			if r.err == nil || !strings.Contains(r.err.Error(), c.want) || !strings.Contains(r.err.Error(), "See: pantech db engines") {
+				t.Fatalf("err = %v, want %q", r.err, c.want)
+			}
+			if sent {
+				t.Fatal("sent anyway")
+			}
+		})
+	}
+}
+
+func TestCheckCreateStorageZoneMinimum(t *testing.T) {
+	o := &api.DatabaseStorageOption{ZoneID: "af-abj-2", MinGB: 50, MaxGB: 1000, StepGB: 25}
+	for _, c := range []struct {
+		plan, size int
+		want       string
+	}{
+		{20, 40, "at least 50 GB (af-abj-2's minimum)"},
+		{20, 50, ""},
+		{20, 60, "use 50 GB (af-abj-2's minimum) or a multiple of 25 GB"},
+		{20, 75, ""},
+		{80, 80, ""},
+		{0, 40, "af-abj-2 needs at least 50 GB"},
+		{0, 60, ""},
+	} {
+		err := checkCreateStorage(o, c.plan, c.size)
+		if (c.want == "") != (err == nil) || (err != nil && !strings.Contains(err.Error(), c.want)) {
+			t.Errorf("plan %d size %d: err = %v, want %q", c.plan, c.size, err, c.want)
+		}
+	}
+	if err := checkCreateStorage(nil, 20, 45); err != nil {
+		t.Fatalf("no limits must defer to the API: %v", err)
+	}
+}
+
+func TestDBStorageResizeCheckedAgainstTheZone(t *testing.T) {
+	for name, c := range map[string]struct{ size, want string }{
+		"too large":    {"2010", "--storage-gb 2010 is too large: af-abj-1 allows at most 2000 GB"},
+		"off the step": {"45", "--storage-gb 45 is not allowed: it must be a multiple of 10 GB"},
+		"allowed":      {"40", ""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f, srv := newFakeAPI(t)
+			f.on("GET /databases/db_1", 200, dbWithStorage("20", "null")).
+				on("GET /database-engines", 200, enginesWithStorage).
+				on("POST /databases/db_1/resize-storage", 202, opAccepted)
+			r := run(t, srv, "", "db", "storage", "resize", "db_1", "--storage-gb", c.size, "--yes", "--no-wait")
+			sent := len(f.sent("POST", "/databases/db_1/resize-storage")) == 1
+			if c.want == "" {
+				if r.err != nil || !sent {
+					t.Fatalf("err %v, sent %v", r.err, sent)
+				}
+				return
+			}
+			if r.err == nil || !strings.Contains(r.err.Error(), c.want) || sent {
+				t.Fatalf("err = %v (sent %v), want %q", r.err, sent, c.want)
+			}
+		})
+	}
+}
+
+func TestDBEnginesShowsStorage(t *testing.T) {
+	f, srv := newFakeAPI(t)
+	f.on("GET /database-engines", 200, enginesWithStorage)
+	r := run(t, srv, "", "db", "engines")
+	for _, want := range []string{"plan's disk to 2000 GB, in 10 GB steps", "NGN 146.00", "plan's disk (at least 50 GB) to 1000 GB, in 25 GB steps", "not priced"} {
+		if r.err != nil || !strings.Contains(r.stdout, want) {
+			t.Fatalf("engines lacks %q: %q %v", want, r.stdout, r.err)
+		}
+	}
+}
+
+const regionsBody = `{"data":[{"code":"af-abj","name":"Abuja","placements":[{"kind":"standard","zone":"af-abj-1","available":true,"unavailable_reason":null,"private_network_cidr":"10.250.0.0/20"},{"kind":"vpc","zone":"af-abj-2","available":true,"unavailable_reason":null,"private_network_cidr":null}]}],"next_cursor":null}`
+
+func TestRegionsShowsThePrivateNetwork(t *testing.T) {
+	f, srv := newFakeAPI(t)
+	f.on("GET /regions", 200, regionsBody)
+	r := run(t, srv, "", "regions")
+	if r.err != nil || !strings.Contains(r.stdout, "PRIVATE NETWORK") || !strings.Contains(r.stdout, "10.250.0.0/20") {
+		t.Fatalf("stdout %q err %v", r.stdout, r.err)
+	}
+}
+
+func TestVMPrivateNetworkHintNamesTheRange(t *testing.T) {
+	f, srv := newFakeAPI(t)
+	f.on("POST /instances/vm_1/private-network", 409, `{"type":"about:blank","title":"Conflict","status":409,"code":"SECURITY_GROUP_ALLOWS_PRIVATE_NETWORK","detail":"Narrow them first.","request_id":"req_5"}`).
+		on("GET /instances/vm_1", 200, vmPrivateBody).
+		on("GET /regions", 200, regionsBody)
+	r := run(t, srv, "", "vm", "private-network", "attach", "vm_1")
+	if r.err == nil || !strings.Contains(r.err.Error(), "none covers the private network's range (10.250.0.0/20)") {
+		t.Fatalf("err = %v", r.err)
+	}
+}
+
+func TestCheckAdminUsername(t *testing.T) {
+	for name, want := range map[string]string{
+		"app_admin": "", "dbadmin": "", "admin": "", "a12": "",
+		"ab":                    "3 to 32 characters",
+		"1app":                  "start with a lowercase letter",
+		"_app":                  "start with a lowercase letter",
+		"App":                   "start with a lowercase letter",
+		"app-admin":             "lowercase letters, digits and underscores",
+		"postgres":              "reserved",
+		"current_role":          "reserved",
+		"pg_admin":              "may not start with pg_",
+		"mysqladmin":            "may not start with mysql",
+		"pantech_admin":         "may not start with pantech",
+		strings.Repeat("a", 33): "3 to 32 characters",
+	} {
+		err := checkAdminUsername(name)
+		if (want == "") != (err == nil) || (err != nil && !strings.Contains(err.Error(), want)) {
+			t.Errorf("%q: err = %v, want %q", name, err, want)
+		}
+	}
+}
+
+func TestDBCreateRefusesAReservedAdminUsername(t *testing.T) {
+	f, create := dbCreateAPI(t, strings.Replace(strings.Replace(dbAccepted, "%s", "false", 1), "%s", "null", 1))
+	if r := create("", "--admin-username", "root", "--no-wait"); r.err == nil || !strings.Contains(r.err.Error(), "reserved") {
+		t.Fatalf("err = %v", r.err)
+	}
+	if len(f.sent("POST", "/databases")) != 0 {
+		t.Fatal("sent anyway")
+	}
+}

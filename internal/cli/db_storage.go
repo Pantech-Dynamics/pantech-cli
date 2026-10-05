@@ -23,8 +23,9 @@ func newDBStorageCmd(a *app) *cobra.Command {
 		Short: "Grow a database's data disk, online",
 		Long: `Grow a database's data disk to --storage-gb GB, without a restart. Storage
 only grows: the size must be larger than the current one, a multiple of the
-zone's step (10 GB) and at most its maximum (2000 GB). The database must be
-running, and one resize runs at a time.
+zone's step and at most its maximum ("pantech db engines" shows both: 10 GB
+and 2000 GB today). The database must be running, and one resize runs at a
+time.
 
 No upfront charge: storage is billed hourly, at the new size once the resize
 has completed. Until then "pantech db get" shows the size it is growing to.`,
@@ -47,6 +48,9 @@ has completed. Until then "pantech db get" shows the size it is growing to.`,
 				return err
 			}
 			if err := checkStorageGrowth(&d, args[0], storageGB); err != nil {
+				return err
+			}
+			if err := checkStorageResize(dbStorageLimits(cmd, c, d.Engine, d.ZoneID), storageGB); err != nil {
 				return err
 			}
 			if err := a.confirm(fmt.Sprintf("Grow the storage of %s from %d GB to %d GB? It is billed at the new size once grown, and can never shrink.", args[0], d.DataVolumeSizeGB, storageGB)); err != nil {
@@ -76,6 +80,79 @@ func checkStorageGrowth(d *api.Database, ref string, storageGB int) error {
 		return fmt.Errorf("storage only grows: %s has %d GB, so --storage-gb must be more than that", ref, d.DataVolumeSizeGB)
 	}
 	return nil
+}
+
+// dbStorageLimits is the zone's allowed data disk sizes for engine, from
+// the engines list. nil when they cannot be read or none are listed: the API
+// then decides alone.
+func dbStorageLimits(cmd *cobra.Command, c *api.Client, engine, zone string) *api.DatabaseStorageOption {
+	engines, err := api.ListAll[api.DatabaseEngine](ctx(cmd), c, "/database-engines", nil)
+	if err != nil {
+		return nil
+	}
+	for _, e := range engines {
+		if e.Engine != engine {
+			continue
+		}
+		for _, o := range e.Storage {
+			if o.ZoneID == zone && o.StepGB > 0 && o.MaxGB > 0 {
+				return &o
+			}
+		}
+	}
+	return nil
+}
+
+// checkCreateStorage refuses, before anything is sent, a --storage-gb the
+// zone does not allow for a new database: at least the base size (the
+// plan's disk_gb, or the zone's minimum when larger), at most the maximum,
+// and either the base size itself or a multiple of the step. planDiskGB 0
+// means the plan's disk is not known, so only what does not depend on it is
+// checked. A nil o checks nothing.
+func checkCreateStorage(o *api.DatabaseStorageOption, planDiskGB, storageGB int) error {
+	if o == nil || storageGB <= 0 {
+		return nil
+	}
+	if storageGB > o.MaxGB {
+		return storageLimitError("--storage-gb %d is too large: %s allows at most %d GB", storageGB, o.ZoneID, o.MaxGB)
+	}
+	if planDiskGB <= 0 {
+		if storageGB < o.MinGB {
+			return storageLimitError("--storage-gb %d is too small: %s needs at least %d GB", storageGB, o.ZoneID, o.MinGB)
+		}
+		return nil
+	}
+	base := max(planDiskGB, o.MinGB)
+	baseIs := "the plan's disk"
+	if o.MinGB > planDiskGB {
+		baseIs = o.ZoneID + "'s minimum"
+	}
+	if storageGB < base {
+		return storageLimitError("--storage-gb %d is too small: at least %d GB (%s)", storageGB, base, baseIs)
+	}
+	if storageGB != base && storageGB%o.StepGB != 0 {
+		return storageLimitError("--storage-gb %d is not allowed: use %d GB (%s) or a multiple of %d GB above it", storageGB, base, baseIs, o.StepGB)
+	}
+	return nil
+}
+
+// checkStorageResize refuses a new size above the zone's maximum or off its
+// step. Growth itself is checkStorageGrowth's. A nil o checks nothing.
+func checkStorageResize(o *api.DatabaseStorageOption, storageGB int) error {
+	if o == nil {
+		return nil
+	}
+	if storageGB > o.MaxGB {
+		return storageLimitError("--storage-gb %d is too large: %s allows at most %d GB", storageGB, o.ZoneID, o.MaxGB)
+	}
+	if storageGB%o.StepGB != 0 {
+		return storageLimitError("--storage-gb %d is not allowed: it must be a multiple of %d GB", storageGB, o.StepGB)
+	}
+	return nil
+}
+
+func storageLimitError(format string, args ...any) error {
+	return fmt.Errorf(format+"\nSee: pantech db engines", args...)
 }
 
 func dbSnapshotKind(dbID, dbRef string) kind {

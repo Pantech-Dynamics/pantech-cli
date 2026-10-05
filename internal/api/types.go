@@ -98,6 +98,9 @@ type Region struct {
 		Zone              string  `json:"zone"`
 		Available         bool    `json:"available"`
 		UnavailableReason *string `json:"unavailable_reason"`
+		// PrivateNetworkCIDR is the zone's private database network range,
+		// when its VMs can attach to it; nil otherwise.
+		PrivateNetworkCIDR *string `json:"private_network_cidr"`
 	} `json:"placements"`
 }
 
@@ -269,15 +272,31 @@ func (e *OrderFailed) Error() string {
 	if e.Order.FailureCode != nil && *e.Order.FailureCode != "" {
 		code = *e.Order.FailureCode
 	}
+	if why, ok := orderFailureText[code]; ok {
+		return fmt.Sprintf("order %s did not provision: %s (%s)", e.Order.ID, why, code)
+	}
 	return fmt.Sprintf("order %s did not provision: %s", e.Order.ID, code)
+}
+
+// orderFailureText says what an order's failure_code means. Codes not here
+// are shown as they are.
+var orderFailureText = map[string]string{
+	"payment_expired":      "it was not paid within an hour",
+	"organization_deleted": "it was cancelled because its organization was deleted; any payment taken is back in your credit",
+	"card_declined":        "the card was declined",
+	"insufficient_credit":  "there was not enough credit to pay for it",
+	"database_name_taken":  "a database with that name already exists",
+	"provisioning_failed":  "provisioning could not start; any payment taken is back in your credit",
 }
 
 // OperationFailed is an operation that finished with status failed.
 type OperationFailed struct{ Op *Operation }
 
+// Error carries the API's own reason, which already says what to do next,
+// and the operation id to quote to support.
 func (e *OperationFailed) Error() string {
 	if e.Op.Failure != nil {
-		return fmt.Sprintf("%s failed: %s (%s)", e.Op.Kind, e.Op.Failure.Reason, e.Op.Failure.Code)
+		return fmt.Sprintf("%s failed: %s (%s, operation %s)", e.Op.Kind, e.Op.Failure.Reason, e.Op.Failure.Code, e.Op.ID)
 	}
 	return fmt.Sprintf("%s failed (operation %s)", e.Op.Kind, e.Op.ID)
 }

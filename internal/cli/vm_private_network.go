@@ -36,7 +36,8 @@ VM gets the interface without a restart. Once attached, allow the interface's
 address on each database as a /32 access rule.
 
 The VM's security group must allow nothing from the private network's range
-(10.250.0.0/20 in af-abj-1), including 0.0.0.0/0 and ICMP-only rules: a group
+(its zone's "private network" in "pantech regions", e.g. 10.250.0.0/20),
+including 0.0.0.0/0 and ICMP-only rules: a group
 applies to every interface, so such a rule would open the VM to the whole
 network. A group that does is refused; narrow its rules first with
 "pantech security-groups rules set".
@@ -111,13 +112,38 @@ func privateNetworkHint(cmd *cobra.Command, c *api.Client, vmID string, err erro
 	if !api.IsCode(err, "SECURITY_GROUP_ALLOWS_PRIVATE_NETWORK") {
 		return err
 	}
-	group := "<security group>"
+	group, rng := "<security group>", "the private network's range"
 	var vm api.Instance
-	if _, getErr := api.Get(ctx(cmd), c, "/instances/"+url.PathEscape(vmID), &vm); getErr == nil && vm.SecurityGroupID != nil && *vm.SecurityGroupID != "" {
-		group = *vm.SecurityGroupID
+	if _, getErr := api.Get(ctx(cmd), c, "/instances/"+url.PathEscape(vmID), &vm); getErr == nil {
+		if vm.SecurityGroupID != nil && *vm.SecurityGroupID != "" {
+			group = *vm.SecurityGroupID
+		}
+		if cidr := privateNetworkCIDR(cmd, c, vm.Zone); cidr != "" {
+			rng += " (" + cidr + ")"
+		}
 	}
-	return &hinted{err: err, hint: "Narrow the group's ingress rules so none covers the private network's range, then attach again.\n" +
+	return &hinted{err: err, hint: "Narrow the group's ingress rules so none covers " + rng + ", then attach again.\n" +
 		"See: pantech security-groups rules set " + group + " --rule ingress:tcp:22:<your address>/32"}
+}
+
+// privateNetworkCIDR is the private database network range of zone, from
+// the regions list; "" when not known.
+func privateNetworkCIDR(cmd *cobra.Command, c *api.Client, zone *string) string {
+	if zone == nil || *zone == "" {
+		return ""
+	}
+	regions, err := api.ListAll[api.Region](ctx(cmd), c, "/regions", nil)
+	if err != nil {
+		return ""
+	}
+	for _, r := range regions {
+		for _, p := range r.Placements {
+			if p.Zone == *zone && p.PrivateNetworkCIDR != nil && *p.PrivateNetworkCIDR != "" {
+				return *p.PrivateNetworkCIDR
+			}
+		}
+	}
+	return ""
 }
 
 type hinted struct {

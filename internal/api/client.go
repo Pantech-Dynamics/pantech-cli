@@ -62,7 +62,9 @@ type Problem struct {
 
 func (p *Problem) Error() string {
 	msg := p.Detail
-	if msg == "" {
+	if msg == "" || (len(p.Errors) > 0 && msg == p.fieldErrorsDetail()) {
+		// A 422's detail is built from its field errors ("field: message;
+		// …"), which are listed one per line below: lead with the title.
 		msg = p.Title
 	}
 	if msg == "" {
@@ -89,6 +91,21 @@ func (p *Problem) Error() string {
 		b.WriteString(")")
 	}
 	return b.String()
+}
+
+// fieldErrorsDetail is the detail the API builds from the field errors
+// alone: "field: message; field2: message2." (each message without its
+// final full stop).
+func (p *Problem) fieldErrorsDetail() string {
+	parts := make([]string, 0, len(p.Errors))
+	for _, e := range p.Errors {
+		m := strings.TrimSuffix(strings.TrimSpace(e.Message), ".")
+		if e.Field != "" {
+			m = e.Field + ": " + m
+		}
+		parts = append(parts, m)
+	}
+	return strings.Join(parts, "; ") + "."
 }
 
 // IsCode reports whether err is a Problem with the given code.

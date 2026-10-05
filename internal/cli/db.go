@@ -82,9 +82,38 @@ func newDBEnginesCmd(a *app) *cobra.Command {
 				}
 			}
 			a.out.Table([]string{"engine", "name", "version", "end of life", "zones"}, rows)
+			if storage := engineStorageRows(a.out, engines); len(storage) > 0 {
+				a.out.Line("")
+				a.out.Table([]string{"engine", "zone", "storage", "per GB a month"}, storage)
+			}
 			return nil
 		},
 	}
+}
+
+// engineStorageRows is each engine's data disk sizes per zone: from the
+// plan's disk (or the zone's minimum) to the maximum, in steps, and the price
+// of a GB, or that it is not priced.
+func engineStorageRows(out *output.Printer, engines []api.DatabaseEngine) [][]string {
+	var rows [][]string
+	for _, e := range engines {
+		for i, o := range e.Storage {
+			from := "plan's disk"
+			if o.MinGB > 0 {
+				from = fmt.Sprintf("plan's disk (at least %d GB)", o.MinGB)
+			}
+			price := out.Dim("not priced")
+			if o.PricePerGBMonthMinor != nil && o.Currency != nil {
+				price = money(*o.PricePerGBMonthMinor, *o.Currency)
+			}
+			engine := e.Engine
+			if i > 0 {
+				engine = ""
+			}
+			rows = append(rows, []string{engine, o.ZoneID, fmt.Sprintf("%s to %d GB, in %d GB steps", from, o.MaxGB, o.StepGB), price})
+		}
+	}
+	return rows
 }
 
 func newDBListCmd(a *app) *cobra.Command {
@@ -238,6 +267,11 @@ func newDBCreateCmd(a *app) *cobra.Command {
 organization's default card, then the database is provisioned; this waits
 until it is running unless you pass --no-wait.
 
+The admin login is --admin-username (default dbadmin): 3 to 32 lowercase
+letters, digits or underscores, starting with a letter; root, postgres,
+public, none, all, user, sys, system, replication, current_user, current_role,
+session_user and names starting pg_, mysql, mariadb or pantech are reserved.
+
 The admin password: pass --password-stdin to choose it (16 to 128 printable
 ASCII characters, no spaces, quotes or backslashes), typed at a hidden prompt
 or piped in. Without it one is generated and printed ONCE, alone on stdout:
@@ -248,7 +282,9 @@ of the order.
 In a VPC zone --subnet is required and the subnet's range may connect by
 default; in a standard zone nothing may connect until you add access rules.
 --storage-gb sizes the data disk (default: the plan's disk_gb; above it, a
-multiple of 10 GB, at most 2000); "pantech db storage resize" grows it later.
+multiple of the zone's step, at most its maximum: 10 GB and 2000 GB today, as
+"pantech db engines" shows); a size the zone does not allow is refused before
+anything is ordered. "pantech db storage resize" grows it later.
 Find engines and versions with "pantech db engines", plans with
 "pantech plans", zones with "pantech regions".`,
 		Example: `  pantech db create --name app --engine postgresql --version 18 --plan starter --zone af-abj-1 --access-rule 203.0.113.4/32
@@ -264,6 +300,11 @@ Find engines and versions with "pantech db engines", plans with
 			}
 			if noAccessRules && len(accessRules) > 0 {
 				return &usageError{errors.New("--no-access-rules and --access-rule do not go together"), cmd}
+			}
+			if adminUsername != "" {
+				if err := checkAdminUsername(adminUsername); err != nil {
+					return &usageError{err, cmd}
+				}
 			}
 			c, err := a.client()
 			if err != nil {
@@ -291,8 +332,19 @@ Find engines and versions with "pantech db engines", plans with
 				size = fmt.Sprintf("%s, %d GB storage", plan, storageGB)
 			}
 
+			p := findPlan(cmd, c, plan, "vpc")
+			if storageGB > 0 {
+				planDiskGB := 0
+				if p != nil {
+					planDiskGB = p.DiskGB
+				}
+				if err := checkCreateStorage(dbStorageLimits(cmd, c, engine, zone), planDiskGB, storageGB); err != nil {
+					return err
+				}
+			}
+
 			question := fmt.Sprintf("Create database %s (%s %s, %s)?", name, engine, version, size)
-			if price := planPrice(cmd, c, plan, "vpc"); price != "" {
+			if price := priceOf(p); price != "" {
 				amount := "about " + price
 				if storageGB > 0 {
 					amount = "from " + price
@@ -352,7 +404,7 @@ Find engines and versions with "pantech db engines", plans with
 	f.StringVar(&plan, "plan", "", "plan slug, from pantech plans: vCPU, memory and storage (required)")
 	f.StringVar(&zone, "zone", "", "zone, e.g. af-abj-1 (standard) or af-abj-2 (VPC), from pantech regions (required)")
 	f.StringVar(&subnet, "subnet", "", "VPC subnet id: required in a VPC zone, not allowed otherwise")
-	f.StringVar(&adminUsername, "admin-username", "", "the admin login (default: dbadmin)")
+	f.StringVar(&adminUsername, "admin-username", "", "the admin login: 3 to 32 lowercase letters, digits or underscores, starting with a letter (default: dbadmin)")
 	f.IntVar(&storageGB, "storage-gb", 0, "data disk size in GB (default: the plan's disk); it can grow later, never shrink")
 	f.StringArrayVar(&accessRules, "access-rule", nil, "an IPv4 CIDR allowed to connect (repeatable; default: the zone's default)")
 	f.BoolVar(&noAccessRules, "no-access-rules", false, "start with no access rules at all")
@@ -450,9 +502,11 @@ func newDBAccessRulesCmd(a *app) *cobra.Command {
 		Use:   "set <database> [cidr…]",
 		Short: "Replace a database's access rules",
 		Long: `Replace the whole allow-list of a database with the IPv4 CIDRs given. Each
-allows TCP to the engine's port. 0.0.0.0/0 and prefixes shorter than /8 are
-refused; at most 50. Connections from a range you remove are ended. --none
-removes every rule.`,
+allows TCP to the engine's port. Prefixes run from /8 to /32 and 0.0.0.0/0 is
+refused; host bits are cleared (10.0.1.7/24 is 10.0.1.0/24), and a range may
+appear once. At most 50 rules, and at most 1024 ranges together with those
+the database's security groups add. Connections from a range you remove are
+ended. --none removes every rule.`,
 		Example: `  pantech db access-rules set app 203.0.113.4/32 10.0.1.0/24
   pantech db access-rules set app --none`,
 		Args: cobra.MinimumNArgs(1),
@@ -667,6 +721,43 @@ func readPassword(confirm bool) (string, error) {
 		password = strings.TrimRight(line, "\r\n")
 	}
 	return password, checkPassword(password)
+}
+
+// reservedAdminUsernames and reservedAdminUsernamePrefixes are the names
+// the platform refuses for an admin login.
+var (
+	reservedAdminUsernames = map[string]bool{
+		"root": true, "postgres": true, "public": true, "none": true, "all": true,
+		"current_user": true, "current_role": true, "session_user": true, "user": true,
+		"sys": true, "system": true, "replication": true,
+	}
+	reservedAdminUsernamePrefixes = []string{"pg_", "mysql", "mariadb", "pantech"}
+)
+
+// checkAdminUsername is the platform's rule for an admin login: 3 to 32
+// lowercase letters, digits or underscores, starting with a letter, and not
+// a reserved name.
+func checkAdminUsername(name string) error {
+	if len(name) < 3 || len(name) > 32 {
+		return fmt.Errorf("--admin-username must be 3 to 32 characters (it is %d)", len(name))
+	}
+	if name[0] < 'a' || name[0] > 'z' {
+		return errors.New("--admin-username must start with a lowercase letter")
+	}
+	for i := 0; i < len(name); i++ {
+		if c := name[i]; !(c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '_') {
+			return errors.New("--admin-username may only have lowercase letters, digits and underscores")
+		}
+	}
+	if reservedAdminUsernames[name] {
+		return fmt.Errorf("--admin-username %s is reserved: choose another name", name)
+	}
+	for _, p := range reservedAdminUsernamePrefixes {
+		if strings.HasPrefix(name, p) {
+			return fmt.Errorf("--admin-username may not start with %s: choose another name", p)
+		}
+	}
+	return nil
 }
 
 func checkPassword(p string) error {

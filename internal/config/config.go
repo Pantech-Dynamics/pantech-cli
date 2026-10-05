@@ -15,11 +15,8 @@ import (
 // DefaultProfile is the profile used when none is named.
 const DefaultProfile = "default"
 
-// Profile is one place the CLI can act: an API, a console to sign in
-// through, and the organization its key belongs to.
+// Profile is one place the CLI can act and the organization its key belongs to.
 type Profile struct {
-	APIURL           string   `json:"api_url"`
-	ConsoleURL       string   `json:"console_url"`
 	OrganizationID   string   `json:"organization_id,omitempty"`
 	OrganizationName string   `json:"organization_name,omitempty"`
 	KeyID            string   `json:"key_id,omitempty"`

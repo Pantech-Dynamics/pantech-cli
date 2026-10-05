@@ -29,7 +29,6 @@ func newAuthCmd(a *app) *cobra.Command {
 
 func newLoginCmd(a *app) *cobra.Command {
 	var withToken, noBrowser bool
-	var consoleURL string
 	cmd := &cobra.Command{
 		Use:   "login",
 		Short: "Sign in through the console in your browser",
@@ -49,19 +48,7 @@ or skip storing anything and set PANTECH_API_KEY.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			name := a.profileName()
-			profile := a.profileOrDefault()
-			if consoleURL == "" {
-				consoleURL = os.Getenv("PANTECH_CONSOLE_URL")
-			}
-			if consoleURL != "" {
-				profile.ConsoleURL = strings.TrimRight(consoleURL, "/")
-			}
-
-			// --api-url or PANTECH_API_URL, when given, win over the API the console names.
-			apiOverride := strings.TrimRight(a.apiURL, "/")
-			if apiOverride == "" {
-				apiOverride = strings.TrimRight(os.Getenv("PANTECH_API_URL"), "/")
-			}
+			profile := a.cfg.Profiles[name]
 			// The key has to work against its API before it is kept.
 			var me *api.Me
 			verify := func(c context.Context, apiURL, key string) error {
@@ -78,17 +65,14 @@ or skip storing anything and set PANTECH_API_KEY.`,
 				if key, err = readToken(); err != nil {
 					return err
 				}
-				if apiOverride != "" {
-					profile.APIURL = apiOverride
-				}
-				if err := verify(ctx(cmd), profile.APIURL, key); err != nil {
+				if err := verify(ctx(cmd), api.DefaultBaseURL, key); err != nil {
 					return err
 				}
 			} else {
 				host, _ := os.Hostname()
 				host = strings.TrimSuffix(host, ".local")
 				b := &auth.Browser{
-					ConsoleURL: profile.ConsoleURL,
+					ConsoleURL: DefaultConsoleURL,
 					Host:       host,
 					Prompt: func(url string, opened bool) {
 						if opened {
@@ -100,14 +84,7 @@ or skip storing anything and set PANTECH_API_KEY.`,
 					},
 					// Checked before the browser tab is told it worked.
 					Verify: func(c context.Context, g *auth.Grant) error {
-						// The console says which API it talks to.
-						if g.APIURL != "" {
-							profile.APIURL = strings.TrimRight(g.APIURL, "/")
-						}
-						if apiOverride != "" {
-							profile.APIURL = apiOverride
-						}
-						if err := verify(c, profile.APIURL, g.APIKey); err != nil {
+						if err := verify(c, api.DefaultBaseURL, g.APIKey); err != nil {
 							return fmt.Errorf("%w\nThe console created key %s for this sign-in: revoke it under Organization › API keys", err, g.KeyID)
 						}
 						return nil
@@ -160,10 +137,6 @@ or skip storing anything and set PANTECH_API_KEY.`,
 	}
 	cmd.Flags().BoolVar(&withToken, "with-token", false, "read an API key from stdin instead of signing in in a browser")
 	cmd.Flags().BoolVar(&noBrowser, "no-browser", false, "print the sign-in link instead of opening a browser")
-	cmd.Flags().StringVar(&consoleURL, "console-url", "", "console to sign in through (env PANTECH_CONSOLE_URL)")
-	// For the team, through staging or a local console: it works, but help
-	// does not offer it, as customers never need it (see README, Development).
-	_ = cmd.Flags().MarkHidden("console-url")
 	return cmd
 }
 
@@ -254,7 +227,7 @@ func newStatusCmd(a *app) *cobra.Command {
 			if os.Getenv("PANTECH_API_KEY") != "" {
 				source = "PANTECH_API_KEY"
 			}
-			profile := a.profileOrDefault()
+			profile := a.cfg.Profiles[a.profileName()]
 			title := me.OrganizationID
 			subtitle := ""
 			if profile.OrganizationName != "" && profile.OrganizationID == me.OrganizationID {

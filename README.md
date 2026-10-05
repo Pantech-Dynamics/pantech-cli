@@ -30,8 +30,9 @@ pantech auth login --with-token < key.txt   # a key made in the console
 export PANTECH_API_KEY=PAN_…                 # or nothing stored at all (CI)
 ```
 
-Profiles keep more than one sign-in: `pantech --profile staging auth login`, then
-`--profile staging` (or `PANTECH_PROFILE=staging`) on any command.
+Profiles keep more than one sign-in: `pantech --profile work auth login`, then
+`--profile work` (or `PANTECH_PROFILE=work`) on any command. Every profile uses
+the production console and API.
 
 ## Commands
 
@@ -72,18 +73,8 @@ make test        # go vet and go test
 make dist        # release archives for every platform, in dist/
 ```
 
-Against the local console and api-dev:
-
-```sh
-./pantech auth login --console-url https://localhost:3000
-```
-
-The console tells the CLI which API it talks to, so a sign-in through a
-development console calls api-dev.
-
-`--console-url` (on `auth login`) and `--api-url` (on any command), and their
-`PANTECH_CONSOLE_URL` and `PANTECH_API_URL`, are for the team's own stacks:
-they work, but `--help` does not list them, as customers never need them. `PANTECH_CONFIG_DIR` points the CLI at
+The CLI always signs in through `https://console.pantechdynamics.com` and calls
+`https://api.pantechdynamics.com`. `PANTECH_CONFIG_DIR` points the CLI at
 another config directory, and `PANTECH_NO_KEYRING=1` keeps it out of your
 keychain, for testing.
 

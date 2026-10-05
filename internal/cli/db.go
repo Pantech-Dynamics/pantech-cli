@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"os"
+	"slices"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -312,7 +314,11 @@ Find engines and versions with "pantech db engines", plans with
 			}
 			body := map[string]any{"name": name, "engine": engine, "version": version, "plan_slug": plan, "zone_id": zone}
 			if subnet != "" {
-				body["subnet_id"] = subnet
+				id, err := resolveSubnet(cmd, c, subnet)
+				if err != nil {
+					return err
+				}
+				body["subnet_id"] = id
 			}
 			if adminUsername != "" {
 				body["admin_username"] = adminUsername
@@ -403,7 +409,7 @@ Find engines and versions with "pantech db engines", plans with
 	f.StringVar(&version, "version", "", "a version from pantech db engines, e.g. 18 (required)")
 	f.StringVar(&plan, "plan", "", "plan slug, from pantech plans: vCPU, memory and storage (required)")
 	f.StringVar(&zone, "zone", "", "zone, e.g. af-abj-1 (standard) or af-abj-2 (VPC), from pantech regions (required)")
-	f.StringVar(&subnet, "subnet", "", "VPC subnet id: required in a VPC zone, not allowed otherwise")
+	f.StringVar(&subnet, "subnet", "", "VPC subnet, by id or name: required in a VPC zone, not allowed otherwise")
 	f.StringVar(&adminUsername, "admin-username", "", "the admin login: 3 to 32 lowercase letters, digits or underscores, starting with a letter (default: dbadmin)")
 	f.IntVar(&storageGB, "storage-gb", 0, "data disk size in GB (default: the plan's disk); it can grow later, never shrink")
 	f.StringArrayVar(&accessRules, "access-rule", nil, "an IPv4 CIDR allowed to connect (repeatable; default: the zone's default)")
@@ -506,7 +512,8 @@ allows TCP to the engine's port. Prefixes run from /8 to /32 and 0.0.0.0/0 is
 refused; host bits are cleared (10.0.1.7/24 is 10.0.1.0/24), and a range may
 appear once. At most 50 rules, and at most 1024 ranges together with those
 the database's security groups add. Connections from a range you remove are
-ended. --none removes every rule.`,
+ended. --none removes every rule. To change one rule and keep the others,
+use access-rules add or remove.`,
 		Example: `  pantech db access-rules set app 203.0.113.4/32 10.0.1.0/24
   pantech db access-rules set app --none`,
 		Args: cobra.MinimumNArgs(1),
@@ -543,8 +550,103 @@ ended. --none removes every rule.`,
 	}
 	set.Flags().BoolVar(&none, "none", false, "remove every rule")
 	set.Flags().BoolVar(&noWait, "no-wait", false, "return the operation id without waiting")
-	cmd.AddCommand(set)
+	cmd.AddCommand(set, newDBAccessRulesChangeCmd(a, true), newDBAccessRulesChangeCmd(a, false))
 	return cmd
+}
+
+// newDBAccessRulesChangeCmd is access-rules add (add) or access-rules
+// remove: the allow-list is read, changed and written back whole.
+func newDBAccessRulesChangeCmd(a *app, add bool) *cobra.Command {
+	var noWait bool
+	cmd := &cobra.Command{
+		Use:   "add <database> <cidr…>",
+		Short: "Allow more CIDRs to connect to a database, keeping its other rules",
+		Long: `Add IPv4 CIDRs to a database's allow-list. Ranges it already allows are left
+as they are. The list is read and written back with the new ranges, so run
+one change to a database at a time.`,
+		Example: `  pantech db access-rules add app 10.250.0.9/32`,
+		Args:    cobra.MinimumNArgs(2),
+	}
+	if !add {
+		cmd.Use = "remove <database> <cidr…>"
+		cmd.Aliases = []string{"rm"}
+		cmd.Short = "Stop CIDRs connecting to a database, keeping its other rules"
+		cmd.Long = `Remove IPv4 CIDRs from a database's allow-list; connections from them are
+ended. The list is read and written back without them, so run one change
+to a database at a time.`
+		cmd.Example = `  pantech db access-rules remove app 203.0.113.4/32`
+	}
+	cmd.RunE = func(cmd *cobra.Command, args []string) error {
+		c, err := a.client()
+		if err != nil {
+			return err
+		}
+		id, err := resolveDatabase(cmd, c, args[0])
+		if err != nil {
+			return err
+		}
+		var d api.Database
+		if _, err := api.Get(ctx(cmd), c, "/databases/"+url.PathEscape(id), &d); err != nil {
+			return err
+		}
+		have := make([]string, len(d.AccessRules))
+		for i, r := range d.AccessRules {
+			have[i] = normalCIDR(r.CIDR)
+		}
+		given := make([]string, len(args)-1)
+		for i, cidr := range args[1:] {
+			given[i] = normalCIDR(cidr)
+		}
+		var next []string
+		if add {
+			next = append(next, have...)
+			for _, cidr := range given {
+				if !slices.Contains(next, cidr) {
+					next = append(next, cidr)
+				}
+			}
+			if len(next) == len(have) {
+				a.out.Note("%s already allows %s.", args[0], strings.Join(args[1:], ", "))
+				return nil
+			}
+		} else {
+			for i, cidr := range given {
+				if !slices.Contains(have, cidr) {
+					return fmt.Errorf("%s has no access rule for %s\nSee: pantech db get %s", args[0], args[1+i], args[0])
+				}
+			}
+			for _, cidr := range have {
+				if !slices.Contains(given, cidr) {
+					next = append(next, cidr)
+				}
+			}
+			question := fmt.Sprintf("Stop %s connecting to %s? Their connections are ended.", strings.Join(args[1:], ", "), args[0])
+			if len(next) == 0 {
+				question = fmt.Sprintf("Remove the last access rule of %s? Nothing will be able to connect.", args[0])
+			}
+			if err := a.confirm(question); err != nil {
+				return err
+			}
+		}
+		rules := make([]map[string]string, len(next))
+		for i, cidr := range next {
+			rules[i] = map[string]string{"cidr": cidr}
+		}
+		req := api.Request{Method: http.MethodPut, Path: "/databases/" + url.PathEscape(id) + "/access-rules", Body: map[string]any{"rules": rules}}
+		return a.runWrite(cmd, c, req, noWait, verb{"Updating access to", "Updated access to"}, args[0])
+	}
+	cmd.Flags().BoolVar(&noWait, "no-wait", false, "return the operation id without waiting")
+	return cmd
+}
+
+// normalCIDR clears a CIDR's host bits, as the API does (10.0.1.7/24 is
+// 10.0.1.0/24), so ranges compare as the API stores them. Anything that is
+// not a CIDR is left for the API to refuse.
+func normalCIDR(s string) string {
+	if p, err := netip.ParsePrefix(s); err == nil {
+		return p.Masked().String()
+	}
+	return s
 }
 
 func newDBSecurityGroupsCmd(a *app) *cobra.Command {
@@ -671,7 +773,10 @@ database must be running.`,
 			} else {
 				return fmt.Errorf("the new password was returned to an earlier attempt of this request and cannot be shown again: run pantech db password reset %s again", args[0])
 			}
-			if resetNoWait || accepted.OperationID == "" {
+			if accepted.OperationID == "" {
+				return nil
+			}
+			if resetNoWait {
 				a.out.Next("Follow it", "pantech operations wait "+accepted.OperationID)
 				return nil
 			}

@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -10,6 +11,7 @@ import (
 	"sort"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -243,7 +245,11 @@ Find plans with "pantech plans", images with "pantech images" and your keys with
 			}
 			placement := "standard"
 			if subnet != "" {
-				body["subnet_id"] = subnet
+				id, err := resolveSubnet(cmd, c, subnet)
+				if err != nil {
+					return err
+				}
+				body["subnet_id"] = id
 				placement = "vpc"
 			}
 			if securityGroup != "" {
@@ -340,7 +346,7 @@ Find plans with "pantech plans", images with "pantech images" and your keys with
 	f.StringVar(&image, "image", "", "image slug, from pantech images (required)")
 	f.StringVar(&sshKey, "ssh-key", "", "SSH key to install, by id or name")
 	f.StringVar(&region, "region", "", "region code (default: the platform's region)")
-	f.StringVar(&subnet, "subnet", "", "VPC subnet id, for a VM without its own public IPv4")
+	f.StringVar(&subnet, "subnet", "", "VPC subnet, by id or name, for a VM without its own public IPv4")
 	f.StringVar(&securityGroup, "security-group", "", "security group, by id or name, for a standard VM (default: your default group)")
 	f.StringToStringVar(&tags, "tags", nil, "tags as key=value pairs, e.g. --tags env=prod,team=web")
 	f.BoolVar(&noWait, "no-wait", false, "return once ordered, without waiting for it to provision")
@@ -511,10 +517,11 @@ otherwise); --user changes it. Anything after -- goes to ssh.`,
 			if err != nil {
 				return errors.New("no ssh on your PATH")
 			}
-			grant, err := a.openSSHAccess(cmd, c, &vm)
+			grant, opened, err := a.sshTarget(cmd, c, &vm)
 			if err != nil {
 				return err
 			}
+			revoke = revoke && opened
 			if user == "" {
 				user = defaultUser(vm.ImageSlug)
 			}
@@ -527,6 +534,8 @@ otherwise); --user changes it. Anything after -- goes to ssh.`,
 			session := exec.Command(sshPath, argv[1:]...)
 			session.Stdin, session.Stdout, session.Stderr = os.Stdin, os.Stdout, os.Stderr
 			runErr := session.Run()
+			// Ctrl+C in the session has cancelled the command's context, but
+			// the port must still be closed.
 			if err := a.revokeSSHAccess(cmd, c, vm.ID, grant.ID); err != nil {
 				return fmt.Errorf("the session ended but SSH access is still open until it expires: %w", err)
 			}
@@ -584,17 +593,49 @@ func (a *app) openSSHAccess(cmd *cobra.Command, c *api.Client, vm *api.Instance)
 	return &grant, nil
 }
 
-// revokeSSHAccess closes a grant's port and waits for it.
+// sshTarget is where to connect: a grant the platform opened (opened), or,
+// when it would not open one (the VM shares its security group, the key
+// cannot write, ...), the VM's own address, which its security group may
+// already allow.
+func (a *app) sshTarget(cmd *cobra.Command, c *api.Client, vm *api.Instance) (grant *api.SSHAccessGrant, opened bool, err error) {
+	grant, err = a.openSSHAccess(cmd, c, vm)
+	if err == nil {
+		return grant, true, nil
+	}
+	addr := vm.Address()
+	if !sshAccessRefused(err) || addr == "" {
+		return nil, false, err
+	}
+	a.out.Warn("%v", err)
+	a.out.Warn("Connecting to %s directly: this works only if its security group already allows port 22 from you.", addr)
+	return &api.SSHAccessGrant{Host: &addr}, false, nil
+}
+
+// sshAccessRefused reports whether the platform declined to open SSH access,
+// as opposed to the key being refused or the request not getting through.
+func sshAccessRefused(err error) bool {
+	var p *api.Problem
+	if errors.As(err, &p) {
+		return p.Status >= 400 && p.Status < 500 && p.Status != http.StatusUnauthorized && p.Status != http.StatusTooManyRequests
+	}
+	var failed *api.OperationFailed
+	return errors.As(err, &failed)
+}
+
+// revokeSSHAccess closes a grant's port and waits for it. It runs even once
+// the command is interrupted, for up to revokeTimeout.
 func (a *app) revokeSSHAccess(cmd *cobra.Command, c *api.Client, vmID, grantID string) error {
+	rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx(cmd)), revokeTimeout)
+	defer cancel()
 	var accepted api.Accepted
 	path := "/instances/" + url.PathEscape(vmID) + "/ssh-access/" + url.PathEscape(grantID)
-	if _, err := c.Do(ctx(cmd), api.Request{Method: http.MethodDelete, Path: path}, &accepted); err != nil {
+	if _, err := c.Do(rctx, api.Request{Method: http.MethodDelete, Path: path}, &accepted); err != nil {
 		return err
 	}
 	steps := a.out.Steps()
 	steps.Start("Closing SSH access")
 	if accepted.OperationID != "" {
-		if _, err := api.WaitOperation(ctx(cmd), c, accepted.OperationID, nil); err != nil {
+		if _, err := api.WaitOperation(rctx, c, accepted.OperationID, nil); err != nil {
 			steps.Fail("", "")
 			return err
 		}
@@ -602,6 +643,8 @@ func (a *app) revokeSSHAccess(cmd *cobra.Command, c *api.Client, vmID, grantID s
 	steps.Done("SSH access closed", "")
 	return nil
 }
+
+var revokeTimeout = 30 * time.Second
 
 // sshArgv is the ssh command line for a grant: user@host, its port when it
 // is not 22, then the caller's own arguments.

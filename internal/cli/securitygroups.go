@@ -1,9 +1,11 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -146,7 +148,8 @@ func newSecurityGroupsRulesCmd(a *app) *cobra.Command {
 		Use:   "set <security group>",
 		Short: "Replace every rule of a security group",
 		Long: `Replace every rule of a security group with the --rule flags given. To remove
-every rule, pass --none.`,
+every rule, pass --none. To change some rules and keep the others, use rules
+add or rules remove.`,
 		Example: `  pantech security-groups rules set web --rule ingress:tcp:22:203.0.113.4/32 --rule ingress:tcp:443:0.0.0.0/0`,
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -175,7 +178,88 @@ every rule, pass --none.`,
 	set.Flags().StringArrayVar(&rules, "rule", nil, "a rule, DIRECTION:PROTOCOL:PORTS:CIDR (repeatable)")
 	set.Flags().BoolVar(&none, "none", false, "remove every rule")
 	set.Flags().BoolVar(&noWait, "no-wait", false, "return the operation id without waiting")
-	cmd.AddCommand(set)
+	cmd.AddCommand(set, newSecurityGroupRulesChangeCmd(a, true), newSecurityGroupRulesChangeCmd(a, false))
+	return cmd
+}
+
+// newSecurityGroupRulesChangeCmd is rules add (add) or rules remove: the
+// group's rules are read, changed and written back whole, keeping the rest.
+func newSecurityGroupRulesChangeCmd(a *app, add bool) *cobra.Command {
+	var rules []string
+	var noWait bool
+	cmd := &cobra.Command{
+		Use:   "add <security group>",
+		Short: "Add rules to a security group, keeping its others",
+		Long: `Add the --rule flags to a security group's rules. Rules it already has are
+left as they are. The group's rules are read and written back with the new
+ones, so run one change to a group at a time.`,
+		Example: `  pantech security-groups rules add web --rule ingress:tcp:22:203.0.113.4/32`,
+		Args:    cobra.ExactArgs(1),
+	}
+	if !add {
+		cmd.Use = "remove <security group>"
+		cmd.Aliases = []string{"rm"}
+		cmd.Short = "Remove rules from a security group, keeping its others"
+		cmd.Long = `Remove the --rule flags from a security group's rules; each must match one
+exactly, as "pantech security-groups get" lists them. The group's rules are
+read and written back without them, so run one change to a group at a time.`
+		cmd.Example = `  pantech security-groups rules remove web --rule ingress:tcp:22:0.0.0.0/0`
+	}
+	cmd.RunE = func(cmd *cobra.Command, args []string) error {
+		if len(rules) == 0 {
+			return &usageError{errors.New("give at least one --rule"), cmd}
+		}
+		parsed, err := parseRules(rules)
+		if err != nil {
+			return err
+		}
+		c, err := a.client()
+		if err != nil {
+			return err
+		}
+		id, err := resolveSecurityGroup(cmd, c, args[0])
+		if err != nil {
+			return err
+		}
+		var g api.SecurityGroup
+		if _, err := api.Get(ctx(cmd), c, "/security-groups/"+url.PathEscape(id), &g); err != nil {
+			return err
+		}
+		var next []api.SecurityGroupRule
+		if add {
+			next = append(next, g.Rules...)
+			for _, r := range parsed {
+				if !slices.Contains(next, r) {
+					next = append(next, r)
+				}
+			}
+			if len(next) == len(g.Rules) {
+				a.out.Note("%s already has these rules.", args[0])
+				return nil
+			}
+		} else {
+			for _, r := range parsed {
+				if !slices.Contains(g.Rules, r) {
+					return fmt.Errorf("%s has no rule %s %s\nSee: pantech security-groups get %s", args[0], r.Direction, formatRule(r), args[0])
+				}
+			}
+			for _, r := range g.Rules {
+				if !slices.Contains(parsed, r) {
+					next = append(next, r)
+				}
+			}
+			if err := a.confirm(fmt.Sprintf("Remove %d rule(s) from %s, leaving %d?", len(g.Rules)-len(next), args[0], len(next))); err != nil {
+				return err
+			}
+		}
+		if next == nil {
+			next = []api.SecurityGroupRule{}
+		}
+		req := api.Request{Method: http.MethodPut, Path: "/security-groups/" + url.PathEscape(id) + "/rules", Body: map[string]any{"rules": next}}
+		return a.runWrite(cmd, c, req, noWait, verb{"Updating", "Updated"}, args[0])
+	}
+	cmd.Flags().StringArrayVar(&rules, "rule", nil, "a rule, DIRECTION:PROTOCOL:PORTS:CIDR (repeatable)")
+	cmd.Flags().BoolVar(&noWait, "no-wait", false, "return the operation id without waiting")
 	return cmd
 }
 

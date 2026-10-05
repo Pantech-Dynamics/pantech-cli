@@ -40,7 +40,7 @@ The VM's security group must allow nothing from the private network's range
 including 0.0.0.0/0 and ICMP-only rules: a group
 applies to every interface, so such a rule would open the VM to the whole
 network. A group that does is refused; narrow its rules first with
-"pantech security-groups rules set".
+"pantech security-groups rules remove" and "rules add".
 
 In the guest the interface stays down until configured. On Ubuntu add it to
 netplan with DHCP only (dhcp4: true, with dhcp4-overrides use-routes: false
@@ -72,7 +72,7 @@ and use-dns: false), then run netplan apply.`,
 				return nil
 			}
 			a.out.Line("%s", *vm.PrivateNetworkIP)
-			a.out.Next("Allow it on a database (with the database's other rules)", "pantech db access-rules set <database> "+*vm.PrivateNetworkIP+"/32")
+			a.out.Next("Allow it on a database", "pantech db access-rules add <database> "+*vm.PrivateNetworkIP+"/32")
 			return nil
 		},
 	}
@@ -122,8 +122,10 @@ func privateNetworkHint(cmd *cobra.Command, c *api.Client, vmID string, err erro
 			rng += " (" + cidr + ")"
 		}
 	}
-	return &hinted{err: err, hint: "Narrow the group's ingress rules so none covers " + rng + ", then attach again.\n" +
-		"See: pantech security-groups rules set " + group + " --rule ingress:tcp:22:<your address>/32"}
+	return &hinted{err: err, hint: "Narrow the group's ingress rules so none covers " + rng + ", then attach again:\n" +
+		"  pantech security-groups get " + group + "\n" +
+		"  pantech security-groups rules remove " + group + " --rule <a rule it lists>\n" +
+		"  pantech security-groups rules add " + group + " --rule ingress:tcp:22:<your address>/32"}
 }
 
 // privateNetworkCIDR is the private database network range of zone, from

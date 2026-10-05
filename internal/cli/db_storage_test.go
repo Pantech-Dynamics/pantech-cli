@@ -147,7 +147,7 @@ func TestVMPrivateNetworkAttach(t *testing.T) {
 	if r.err != nil {
 		t.Fatal(r.err)
 	}
-	if r.stdout != "10.250.0.9\n" || !strings.Contains(r.stderr, "pantech db access-rules set <database> 10.250.0.9/32") {
+	if r.stdout != "10.250.0.9\n" || !strings.Contains(r.stderr, "pantech db access-rules add <database> 10.250.0.9/32") {
 		t.Fatalf("stdout %q stderr %q", r.stdout, r.stderr)
 	}
 	if len(f.sent("GET", "/operations/op_7")) == 0 {
@@ -165,7 +165,7 @@ func TestVMPrivateNetworkAttachRefusedBySecurityGroup(t *testing.T) {
 	if !errors.As(r.err, &p) || p.Code != "SECURITY_GROUP_ALLOWS_PRIVATE_NETWORK" {
 		t.Fatalf("err = %v, want the API's problem", r.err)
 	}
-	for _, want := range []string{msg, "(SECURITY_GROUP_ALLOWS_PRIVATE_NETWORK, request req_5)", "See: pantech security-groups rules set sg_web"} {
+	for _, want := range []string{msg, "(SECURITY_GROUP_ALLOWS_PRIVATE_NETWORK, request req_5)", "pantech security-groups rules remove sg_web", "pantech security-groups rules add sg_web"} {
 		if !strings.Contains(r.err.Error(), want) {
 			t.Fatalf("%q lacks %q", r.err.Error(), want)
 		}

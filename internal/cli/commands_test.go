@@ -173,6 +173,70 @@ func TestOpenSSHAccessFailedOperation(t *testing.T) {
 	}
 }
 
+func TestSSHTargetFallsBackWhenAccessIsRefused(t *testing.T) {
+	for _, c := range []struct {
+		name, status, body string
+		code               int
+	}{
+		{"the VM shares its security group", "POST", `{"status":409,"code":"SECURITY_GROUP_SHARED","detail":"Another VM uses this security group."}`, 409},
+		{"the key cannot write", "POST", `{"status":403,"code":"INSUFFICIENT_SCOPE","detail":"This key lacks the write scope."}`, 403},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			f, srv := newFakeAPI(t)
+			f.on("POST /instances/vm_1/ssh-access", c.code, c.body)
+			a, cmd := testApp(t, srv)
+			addr := "102.211.122.76"
+			grant, opened, err := a.sshTarget(cmd, mustClient(t, a), &api.Instance{ID: "vm_1", Name: "web-1", PrivateIPv4: &addr})
+			if err != nil || opened {
+				t.Fatalf("opened %v, err %v: want the VM's address", opened, err)
+			}
+			if got := sshArgv("ubuntu", grant, nil); !reflect.DeepEqual(got, []string{"ssh", "ubuntu@102.211.122.76"}) {
+				t.Fatalf("argv = %v", got)
+			}
+		})
+	}
+}
+
+func TestSSHTargetDoesNotFallBack(t *testing.T) {
+	addr := "102.211.122.76"
+	for _, c := range []struct {
+		name string
+		vm   api.Instance
+		code int
+		body string
+	}{
+		{"the key was refused", api.Instance{ID: "vm_1", Name: "web-1", PrivateIPv4: &addr}, 401, `{"status":401,"code":"UNAUTHORIZED","detail":"Invalid key."}`},
+		{"no address to fall back to", api.Instance{ID: "vm_1", Name: "web-1"}, 409, `{"status":409,"code":"SECURITY_GROUP_SHARED","detail":"Shared."}`},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			f, srv := newFakeAPI(t)
+			f.on("POST /instances/vm_1/ssh-access", c.code, c.body)
+			a, cmd := testApp(t, srv)
+			if _, _, err := a.sshTarget(cmd, mustClient(t, a), &c.vm); err == nil {
+				t.Fatal("want the error, not a direct connection")
+			}
+		})
+	}
+}
+
+// Ctrl+C during a --revoke session cancels the command's context; the grant
+// must be revoked all the same.
+func TestRevokeSSHAccessAfterInterrupt(t *testing.T) {
+	f, srv := newFakeAPI(t)
+	f.on("DELETE /instances/vm_1/ssh-access/sshg_1", 202, `{"operation_id":"op_2","resource_id":"sshg_1","status":"submitting"}`).
+		on("GET /operations/op_2", 200, `{"id":"op_2","status":"succeeded"}`)
+	a, cmd := testApp(t, srv)
+	interrupted, cancel := context.WithCancel(context.Background())
+	cancel()
+	cmd.SetContext(interrupted)
+	if err := a.revokeSSHAccess(cmd, mustClient(t, a), "vm_1", "sshg_1"); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.sent("DELETE", "/instances/vm_1/ssh-access/sshg_1")) != 1 || len(f.sent("GET", "/operations/op_2")) == 0 {
+		t.Fatal("the grant was not revoked and waited for")
+	}
+}
+
 const (
 	dbAccepted = `{"order_id":"ord_9","database_id":"db_1","resource_id":"db_1","status":"awaiting_payment","operation_id":null,"failure_code":null,"amount_minor":1200000,"currency":"NGN","password_returned":%s,"password":%s,"admin_username":"dbadmin"}`
 	dbBody     = `{"id":"db_1","name":"app","engine":"postgresql","version":"18","port":5432,"zone_id":"af-abj-1","hostname":"db-1.af-abj-1.db.pantechdynamics.com","admin_username":"dbadmin","desired_state":"running","observed_state":"running","generation":1,"observed_generation":1,"access_rules":[{"cidr":"203.0.113.4/32","protocol":"tcp","port":5432}]}`
@@ -342,6 +406,20 @@ func TestDBPasswordReset(t *testing.T) {
 				t.Fatalf("stdout %q stderr %q err %v", r.stdout, r.stderr, r.err)
 			}
 		})
+	}
+}
+
+func TestDBPasswordResetWithNoOperation(t *testing.T) {
+	f, srv := newFakeAPI(t)
+	f.on("POST /databases/db_1/reset-password", 202, `{"operation_id":"","resource_id":"db_1","status":"succeeded","password_returned":true,"password":"`+generated+`"}`)
+	for _, args := range [][]string{nil, {"--no-wait"}} {
+		r := run(t, srv, "", append([]string{"db", "password", "reset", "db_1", "--yes"}, args...)...)
+		if r.err != nil || r.stdout != generated+"\n" {
+			t.Fatalf("%v: stdout %q err %v", args, r.stdout, r.err)
+		}
+		if strings.Contains(r.stderr, "operations wait") {
+			t.Fatalf("%v: suggests following an operation that has no id: %q", args, r.stderr)
+		}
 	}
 }
 

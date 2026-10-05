@@ -9,6 +9,8 @@ release workflow refuses a tag that has no section here.
 
 ## Unreleased
 
+## v0.1.6 — 2026-10-06
+
 ### Fixed
 
 - A profile signed in on a development API by v0.1.2 or older now says so,

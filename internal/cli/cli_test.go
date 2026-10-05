@@ -59,19 +59,26 @@ func TestKeyFileWithoutKeychain(t *testing.T) {
 	}
 }
 
-// The flags for the team's own stacks work but stay out of every help.
-func TestDevFlagsAreHiddenButKept(t *testing.T) {
+func TestProductionEndpointsCannotBeOverridden(t *testing.T) {
+	t.Setenv("PANTECH_API_URL", "https://api-dev.pantechdynamics.com")
+	t.Setenv("PANTECH_CONSOLE_URL", "https://localhost:3000")
+	a := &app{cfg: &config.Config{Profiles: map[string]config.Profile{}}}
+	if got := a.baseURL(); got != "https://api.pantechdynamics.com" {
+		t.Fatalf("baseURL = %q, want production API", got)
+	}
+	if DefaultConsoleURL != "https://console.pantechdynamics.com" {
+		t.Fatalf("DefaultConsoleURL = %q, want production console", DefaultConsoleURL)
+	}
+
 	root := NewRoot()
-	api := root.PersistentFlags().Lookup("api-url")
-	if api == nil || !api.Hidden {
-		t.Fatalf("--api-url should exist and be hidden: %+v", api)
+	if flag := root.PersistentFlags().Lookup("api-url"); flag != nil {
+		t.Fatalf("--api-url should not exist: %+v", flag)
 	}
 	login, _, err := root.Find([]string{"auth", "login"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	console := login.Flags().Lookup("console-url")
-	if console == nil || !console.Hidden {
-		t.Fatalf("--console-url should exist and be hidden: %+v", console)
+	if flag := login.Flags().Lookup("console-url"); flag != nil {
+		t.Fatalf("--console-url should not exist: %+v", flag)
 	}
 }

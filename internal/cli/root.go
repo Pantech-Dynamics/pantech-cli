@@ -26,7 +26,6 @@ const DefaultConsoleURL = "https://console.pantechdynamics.com"
 // app is what every command shares: the flags, the config and a printer.
 type app struct {
 	profile string
-	apiURL  string
 	jsonOut bool
 	quiet   bool
 	yes     bool
@@ -62,10 +61,6 @@ Sign in with "pantech auth login". In CI, set PANTECH_API_KEY instead.`,
 
 	f := root.PersistentFlags()
 	f.StringVarP(&a.profile, "profile", "p", os.Getenv("PANTECH_PROFILE"), "profile to use (default: the current one)")
-	f.StringVar(&a.apiURL, "api-url", "", "API to call, e.g. https://api-dev.pantechdynamics.com (env PANTECH_API_URL)")
-	// For the team, against api-dev or a local stack: it works, but help does
-	// not offer it, as customers never need it (see README, Development).
-	_ = f.MarkHidden("api-url")
 	f.BoolVar(&a.jsonOut, "json", false, "print the API's JSON instead of a table")
 	f.BoolVarP(&a.quiet, "quiet", "q", false, "print only ids")
 	f.BoolVarP(&a.yes, "yes", "y", false, "do not ask before changes that delete or cost money")
@@ -123,29 +118,8 @@ func markUsageErrors(cmd *cobra.Command) {
 // profileName is the profile in use.
 func (a *app) profileName() string { return a.cfg.Name(a.profile) }
 
-// profileOrDefault is the profile's settings, with the defaults filled in.
-func (a *app) profileOrDefault() config.Profile {
-	p := a.cfg.Profiles[a.profileName()]
-	if p.APIURL == "" {
-		p.APIURL = api.DefaultBaseURL
-	}
-	if p.ConsoleURL == "" {
-		p.ConsoleURL = DefaultConsoleURL
-	}
-	return p
-}
-
-// baseURL is --api-url, else $PANTECH_API_URL, else the profile's, else production.
-func (a *app) baseURL() string {
-	switch {
-	case a.apiURL != "":
-		return a.apiURL
-	case os.Getenv("PANTECH_API_URL") != "":
-		return os.Getenv("PANTECH_API_URL")
-	default:
-		return a.profileOrDefault().APIURL
-	}
-}
+// baseURL is always the production public API.
+func (a *app) baseURL() string { return api.DefaultBaseURL }
 
 // errNotSignedIn is returned by client() when there is no key to use.
 var errNotSignedIn = errors.New(`not signed in: run "pantech auth login", or set PANTECH_API_KEY`)

@@ -41,9 +41,8 @@ var ErrNotOffered = errors.New("this console does not offer browser sign-in for 
 	"Create an API key in the console under Organization › API keys and run:\n" +
 	"  pantech auth login --with-token < key.txt")
 
-// ErrGated is a console behind an access gate (pantech-console's staging
-// gate answers the CLI's cookie-less requests with a redirect to
-// /staging-access or a 401). Browser sign-in cannot finish there by design.
+// ErrGated is a console whose token exchange is behind an access gate (it
+// answers 401). The person's browser passes such a gate; the CLI cannot.
 var ErrGated = errors.New("this console is behind an access gate (staging), so browser sign-in for the CLI is not available here\n" +
 	"Create an API key in the console under Organization › API keys and run:\n" +
 	"  pantech auth login --with-token < key.txt")
@@ -74,9 +73,6 @@ func (b *Browser) probe(ctx context.Context) error {
 	_ = res.Body.Close()
 	if res.StatusCode == http.StatusNotFound {
 		return ErrNotOffered
-	}
-	if strings.Contains(res.Header.Get("Location"), "/staging-access") || res.StatusCode == http.StatusUnauthorized {
-		return ErrGated
 	}
 	return nil
 }

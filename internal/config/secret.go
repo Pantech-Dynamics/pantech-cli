@@ -9,7 +9,12 @@ import (
 	"github.com/zalando/go-keyring"
 )
 
-const keyringService = "pantech-cli"
+func keyringService() string {
+	if Name == "pantech" {
+		return "pantech-cli"
+	}
+	return Name
+}
 
 const (
 	InKeychain = "keychain"
@@ -22,7 +27,7 @@ const (
 // says which.
 func SaveKey(profile, key string) (string, error) {
 	if os.Getenv("PANTECH_NO_KEYRING") == "" {
-		if err := keyring.Set(keyringService, profile, key); err == nil {
+		if err := keyring.Set(keyringService(), profile, key); err == nil {
 			// A key moved into the keychain should not linger in the file.
 			_ = deleteFileKey(profile)
 			return InKeychain, nil
@@ -35,7 +40,7 @@ func SaveKey(profile, key string) (string, error) {
 // keychain, or no keychain on this machine: then the file is where it went.
 func LoadKey(profile string) (string, error) {
 	if os.Getenv("PANTECH_NO_KEYRING") == "" {
-		if key, err := keyring.Get(keyringService, profile); err == nil {
+		if key, err := keyring.Get(keyringService(), profile); err == nil {
 			return key, nil
 		}
 	}
@@ -47,7 +52,7 @@ func LoadKey(profile string) (string, error) {
 // With PANTECH_NO_KEYRING set it is left alone, like SaveKey and LoadKey do.
 func DeleteKey(profile string) error {
 	if os.Getenv("PANTECH_NO_KEYRING") == "" {
-		_ = keyring.Delete(keyringService, profile)
+		_ = keyring.Delete(keyringService(), profile)
 	}
 	return deleteFileKey(profile)
 }

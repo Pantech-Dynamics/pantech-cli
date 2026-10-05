@@ -19,8 +19,13 @@ import (
 	"time"
 )
 
-// DefaultBaseURL is the production API. Paths are relative to /public/v1.
-const DefaultBaseURL = "https://api.pantechdynamics.com"
+// ProductionURL is the public API. Paths are relative to /public/v1.
+const ProductionURL = "https://api.pantechdynamics.com"
+
+// DefaultBaseURL is the API this build calls: production, except in a
+// staging build (make build-staging), which sets it at link time. There is
+// no flag or variable for it.
+var DefaultBaseURL = ProductionURL
 
 const prefix = "/public/v1"
 

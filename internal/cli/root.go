@@ -20,7 +20,7 @@ import (
 // Version is set at build time: -ldflags "-X …/internal/cli.Version=v0.1.0".
 var Version = "dev"
 
-const DefaultConsoleURL = "https://console.pantechdynamics.com"
+var DefaultConsoleURL = "https://console.pantechdynamics.com"
 
 type app struct {
 	profile string

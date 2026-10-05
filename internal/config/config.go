@@ -31,19 +31,23 @@ type Config struct {
 	Profiles map[string]Profile `json:"profiles"`
 }
 
+// Name is "pantech", or "pantech-staging" in a staging build, which so keeps
+// its profiles and keys apart from production's.
+var Name = "pantech"
+
 // Dir is $PANTECH_CONFIG_DIR, else $XDG_CONFIG_HOME/pantech, else ~/.config/pantech.
 func Dir() (string, error) {
 	if d := os.Getenv("PANTECH_CONFIG_DIR"); d != "" {
 		return d, nil
 	}
 	if d := os.Getenv("XDG_CONFIG_HOME"); d != "" {
-		return filepath.Join(d, "pantech"), nil
+		return filepath.Join(d, Name), nil
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(home, ".config", "pantech"), nil
+	return filepath.Join(home, ".config", Name), nil
 }
 
 func path() (string, error) {

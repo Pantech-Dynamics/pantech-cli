@@ -161,19 +161,21 @@ func TestExchangeNotOfferedByTheConsole(t *testing.T) {
 	}
 }
 
-// A staging console behind its access gate redirects the cookie-less probe to
-// /staging-access: the CLI says so at once and never opens the browser.
-func TestLoginGatedConsoleSaysUseWithToken(t *testing.T) {
+// A staging console behind its access gate redirects the cookie-less probe
+// to /staging-access. The route is there, and the person's browser passes
+// the gate, so the sign-in goes ahead.
+func TestLoginGatedConsoleGoesAhead(t *testing.T) {
 	console := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/staging-access?next=%2Fcli%2Fauthorize", http.StatusFound)
 	}))
 	t.Cleanup(console.Close)
-	b := &Browser{ConsoleURL: console.URL, Timeout: time.Second, Open: func(string) error {
-		t.Error("the browser must not open behind an access gate")
+	opened := false
+	b := &Browser{ConsoleURL: console.URL, Timeout: 100 * time.Millisecond, Open: func(string) error {
+		opened = true
 		return nil
 	}}
 	_, err := b.Login(context.Background())
-	if !errors.Is(err, ErrGated) || !strings.Contains(err.Error(), "--with-token") {
-		t.Fatalf("err = %v, want ErrGated naming --with-token", err)
+	if !opened || errors.Is(err, ErrGated) {
+		t.Fatalf("opened %v, err %v: want the browser opened", opened, err)
 	}
 }

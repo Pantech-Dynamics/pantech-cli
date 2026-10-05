@@ -131,7 +131,21 @@ make dist        # release archives for every platform, in dist/
 ```
 
 The CLI always signs in through `https://console.pantechdynamics.com` and calls
-`https://api.pantechdynamics.com`. `PANTECH_CONFIG_DIR` points the CLI at
+`https://api.pantechdynamics.com`; no flag or variable changes that.
+
+To work against staging, build a separate binary with the staging addresses
+built in:
+
+```sh
+make build-staging                                            # ./pantech-staging
+make build-staging STAGING_CONSOLE_URL=https://localhost:3000 # a local console
+./pantech-staging auth login
+```
+
+It keeps its own profiles (`~/.config/pantech-staging`) and keychain entries,
+so staging and production keys never mix, it never offers or installs
+upgrades, and `--version` says `staging-…`. Released binaries are built
+without it. `PANTECH_CONFIG_DIR` points the CLI at
 another config directory, and `PANTECH_NO_KEYRING=1` keeps it out of your
 keychain, for testing.
 

@@ -34,6 +34,9 @@ PANTECH_NO_UPDATE_NOTIFIER=1 to turn that off.`,
   pantech upgrade v0.1.5`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if config.Name != "pantech" {
+				return errors.New("this is a staging build, which does not upgrade itself: rebuild it with make build-staging")
+			}
 			latest, err := update.Latest(ctx(cmd))
 			if err != nil {
 				return err

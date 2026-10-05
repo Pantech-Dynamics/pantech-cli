@@ -159,7 +159,27 @@ func (a *app) client() (*api.Client, error) {
 	if key == "" {
 		return nil, errNotSignedIn
 	}
+	if os.Getenv("PANTECH_API_KEY") == "" {
+		if p := a.cfg.Profiles[a.profileName()]; p.APIURL != "" && p.APIURL != api.DefaultBaseURL {
+			return nil, &otherAPIError{profile: a.profileName(), apiURL: p.APIURL, login: a.loginCommand()}
+		}
+	}
 	return api.New(a.baseURL(), key, userAgent()), nil
+}
+
+type otherAPIError struct{ profile, apiURL, login string }
+
+func (e *otherAPIError) Error() string {
+	return fmt.Sprintf("profile %q was signed in on %s, and its key works only there: this CLI always uses the production API\nSign in again: %s", e.profile, e.apiURL, e.login)
+}
+
+func (e *otherAPIError) Is(target error) bool { return target == errNotSignedIn }
+
+func (a *app) loginCommand() string {
+	if a.profile == "" {
+		return "pantech auth login"
+	}
+	return "pantech --profile " + a.profile + " auth login"
 }
 
 func userAgent() string {

@@ -20,6 +20,9 @@ type Profile struct {
 	KeyID            string   `json:"key_id,omitempty"`
 	Scopes           []string `json:"scopes,omitempty"`
 	ExpiresAt        string   `json:"expires_at,omitempty"`
+	// Saved by v0.1.2 and older, which could sign in elsewhere than
+	// production: a key from another API is refused by this one.
+	APIURL string `json:"api_url,omitempty"`
 }
 
 type Config struct {

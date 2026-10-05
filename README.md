@@ -140,9 +140,16 @@ The sign-in protocol, both the CLI's half and pantech-console's, is described in
 
 ## Releasing
 
+Pull requests that change what the CLI does add a line under **Unreleased** in
+[`CHANGELOG.md`](CHANGELOG.md). To release, rename that heading to the version
+and date (`## v0.2.0 — 2026-11-02`) in a pull request, merge it, then tag `main`:
+
 ```sh
 git tag v0.2.0 && git push origin v0.2.0
 ```
+
+The release fails if `CHANGELOG.md` has no section for the tag (pre-releases
+need none).
 
 `.github/workflows/release.yml` tests and builds every platform on a GitHub
 runner (`make dist`), then a runner on the website server, labelled

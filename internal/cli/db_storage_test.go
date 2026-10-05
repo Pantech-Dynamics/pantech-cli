@@ -136,7 +136,7 @@ func TestDBSnapshots(t *testing.T) {
 	}
 }
 
-const vmPrivateBody = `{"id":"vm_1","name":"web-1","plan_id":"p","image_id":"i","zone":"af-abj-1","security_group_id":"sg_web","private_ipv4":"102.211.122.77","desired_state":"running","observed_state":"running","private_network_state":"attached","private_network_ip":"10.250.0.9","tags":{}}`
+const vmPrivateBody = `{"id":"vm_1","name":"web-1","plan_id":"p","image_id":"i","zone":"af-abj-1","security_group_id":"sg_web","private_ipv4":"203.0.113.77","desired_state":"running","observed_state":"running","private_network_state":"attached","private_network_ip":"10.250.0.9","tags":{}}`
 
 func TestVMPrivateNetworkAttach(t *testing.T) {
 	f, srv := newFakeAPI(t)

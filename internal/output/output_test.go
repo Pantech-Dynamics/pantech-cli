@@ -43,9 +43,9 @@ func TestDetailLinesUpLabels(t *testing.T) {
 	p, out, _ := printer(true, false)
 	p.Print(Detail{Title: "web-1", State: "● running", Subtitle: "vm_1", Sections: [][]Pair{
 		{{"Plan", "starter"}},
-		{{"Public IP", "102.211.122.80"}},
+		{{"Public IP", "203.0.113.80"}},
 	}})
-	want := "web-1  ● running\nvm_1\n\n  Plan       starter\n\n  Public IP  102.211.122.80\n"
+	want := "web-1  ● running\nvm_1\n\n  Plan       starter\n\n  Public IP  203.0.113.80\n"
 	if out.String() != want {
 		t.Fatalf("got\n%s\nwant\n%s", out.String(), want)
 	}

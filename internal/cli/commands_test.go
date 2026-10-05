@@ -128,7 +128,7 @@ func TestOpenSSHAccess(t *testing.T) {
 	f.on("POST /instances/vm_1/ssh-access", 202, `{"operation_id":"op_1","resource_id":"sshg_1","status":"submitting"}`).
 		on("GET /operations/op_1", 200, `{"id":"op_1","status":"submitted"}`).
 		on("GET /operations/op_1", 200, `{"id":"op_1","status":"succeeded"}`).
-		on("GET /instances/vm_1/ssh-access/sshg_1", 200, `{"id":"sshg_1","instance_id":"vm_1","status":"active","host":"102.211.122.76","port":2222,"expires_at":"2026-10-05T10:15:00Z"}`).
+		on("GET /instances/vm_1/ssh-access/sshg_1", 200, `{"id":"sshg_1","instance_id":"vm_1","status":"active","host":"203.0.113.76","port":2222,"expires_at":"2026-10-05T10:15:00Z"}`).
 		on("DELETE /instances/vm_1/ssh-access/sshg_1", 202, `{"operation_id":"op_2","resource_id":"sshg_1","status":"submitting"}`).
 		on("GET /operations/op_2", 200, `{"id":"op_2","status":"succeeded"}`)
 	a, cmd := testApp(t, srv)
@@ -136,7 +136,7 @@ func TestOpenSSHAccess(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := sshArgv("ubuntu", grant, []string{"-A"}); !reflect.DeepEqual(got, []string{"ssh", "-p", "2222", "ubuntu@102.211.122.76", "-A"}) {
+	if got := sshArgv("ubuntu", grant, []string{"-A"}); !reflect.DeepEqual(got, []string{"ssh", "-p", "2222", "ubuntu@203.0.113.76", "-A"}) {
 		t.Fatalf("argv = %v", got)
 	}
 	if err := a.revokeSSHAccess(cmd, mustClient(t, a), "vm_1", grant.ID); err != nil {
@@ -153,12 +153,12 @@ func TestOpenSSHAccessFallsBackToTheVMAddress(t *testing.T) {
 		on("GET /operations/op_1", 200, `{"id":"op_1","status":"succeeded"}`).
 		on("GET /instances/vm_1/ssh-access/sshg_1", 200, `{"id":"sshg_1","instance_id":"vm_1","status":"active","host":null,"port":null}`)
 	a, cmd := testApp(t, srv)
-	addr := "102.211.122.76"
+	addr := "203.0.113.76"
 	grant, err := a.openSSHAccess(cmd, mustClient(t, a), &api.Instance{ID: "vm_1", Name: "web-1", PrivateIPv4: &addr})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := sshArgv("root", grant, nil); !reflect.DeepEqual(got, []string{"ssh", "root@102.211.122.76"}) {
+	if got := sshArgv("root", grant, nil); !reflect.DeepEqual(got, []string{"ssh", "root@203.0.113.76"}) {
 		t.Fatalf("argv = %v", got)
 	}
 }
@@ -187,12 +187,12 @@ func TestSSHTargetFallsBackWhenAccessIsRefused(t *testing.T) {
 			f, srv := newFakeAPI(t)
 			f.on("POST /instances/vm_1/ssh-access", c.code, c.body)
 			a, cmd := testApp(t, srv)
-			addr := "102.211.122.76"
+			addr := "203.0.113.76"
 			grant, opened, err := a.sshTarget(cmd, mustClient(t, a), &api.Instance{ID: "vm_1", Name: "web-1", PrivateIPv4: &addr})
 			if err != nil || opened {
 				t.Fatalf("opened %v, err %v: want the VM's address", opened, err)
 			}
-			if got := sshArgv("ubuntu", grant, nil); !reflect.DeepEqual(got, []string{"ssh", "ubuntu@102.211.122.76"}) {
+			if got := sshArgv("ubuntu", grant, nil); !reflect.DeepEqual(got, []string{"ssh", "ubuntu@203.0.113.76"}) {
 				t.Fatalf("argv = %v", got)
 			}
 		})
@@ -200,7 +200,7 @@ func TestSSHTargetFallsBackWhenAccessIsRefused(t *testing.T) {
 }
 
 func TestSSHTargetDoesNotFallBack(t *testing.T) {
-	addr := "102.211.122.76"
+	addr := "203.0.113.76"
 	for _, c := range []struct {
 		name string
 		vm   api.Instance
@@ -578,7 +578,7 @@ func TestResourceLists(t *testing.T) {
 		{[]string{"volumes", "list"}, "GET /volumes", `{"data":[{"id":"vol_1","name":"data","size_gb":5,"disk_offering_slug":"small-5gb","attached_instance_name":"web-1","observed_state":"active"}],"next_cursor":null}`, []string{"data", "5 GB", "small-5gb", "web-1", "vol_1"}},
 		{[]string{"snapshots", "list"}, "GET /snapshots", `{"data":[{"id":"snap_1","name":"nightly","volume_id":"vol_1","volume_name":"data","size_bytes":2040109465,"observed_state":"active"}],"next_cursor":null}`, []string{"nightly", "volume data", "1.9 GB", "snap_1"}},
 		{[]string{"networks", "list"}, "GET /networks", `{"data":[{"id":"net_1","name":"prod","cidr":"10.0.0.0/16","zone":"af-abj-2","observed_state":"active"}],"next_cursor":null}`, []string{"prod", "10.0.0.0/16", "af-abj-2", "net_1"}},
-		{[]string{"public-ips", "list"}, "GET /public-ips", `{"data":[{"id":"pip_1","network_id":"net_1","network_name":"prod","purpose":"static_nat","address":"102.211.122.90","instance_name":"web-1","observed_state":"active"}],"next_cursor":null}`, []string{"102.211.122.90", "static_nat", "prod", "web-1", "pip_1"}},
+		{[]string{"public-ips", "list"}, "GET /public-ips", `{"data":[{"id":"pip_1","network_id":"net_1","network_name":"prod","purpose":"static_nat","address":"203.0.113.90","instance_name":"web-1","observed_state":"active"}],"next_cursor":null}`, []string{"203.0.113.90", "static_nat", "prod", "web-1", "pip_1"}},
 		{[]string{"security-groups", "list"}, "GET /security-groups", `{"data":[{"id":"sg_1","name":"default","rules":[{"direction":"ingress","protocol":"icmp","port_range":"","cidr":"0.0.0.0/0"}],"observed_state":"active"}],"next_cursor":null}`, []string{"default", "sg_1"}},
 		{[]string{"db", "orders", "list"}, "GET /database-orders", `{"data":[{"id":"ord_9","database_id":"db_1","status":"provisioned","amount_minor":1200000,"currency":"NGN"}],"next_cursor":null}`, []string{"ord_9", "db_1", "NGN 12,000.00"}},
 	} {

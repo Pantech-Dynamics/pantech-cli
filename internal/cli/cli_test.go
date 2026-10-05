@@ -60,7 +60,7 @@ func TestKeyFileWithoutKeychain(t *testing.T) {
 }
 
 func TestProductionEndpointsCannotBeOverridden(t *testing.T) {
-	t.Setenv("PANTECH_API_URL", "https://api-dev.pantechdynamics.com")
+	t.Setenv("PANTECH_API_URL", "https://api.example.test")
 	t.Setenv("PANTECH_CONSOLE_URL", "https://localhost:3000")
 	a := &app{cfg: &config.Config{Profiles: map[string]config.Profile{}}}
 	if got := a.baseURL(); got != "https://api.pantechdynamics.com" {

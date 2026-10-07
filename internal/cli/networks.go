@@ -248,15 +248,42 @@ func newPublicIPsCmd(a *app) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "public-ips",
 		Aliases: []string{"public-ip", "ips"},
-		Short:   "Allocate and release public IPs for VPC VMs",
+		Short:   "Reserve, attach, detach and release public IPs for VPC VMs",
+		Long: `Reserve, attach, detach and release public IPs for VPC VMs.
+
+A static_nat address maps every port to one VM. Detach it and attach it to
+another VM to keep the same address across VMs: it stays yours, and is billed
+once, until you release it with "pantech public-ips delete". A detached
+address is still billed.`,
 	}
 	cmd.AddCommand(
 		newPublicIPsListCmd(a),
 		newPublicIPsGetCmd(a),
 		newPublicIPsCreateCmd(a),
+		newPublicIPsAttachCmd(a),
+		newPublicIPsDetachCmd(a),
 		deleteCmd(a, publicIPKind, "The address is released and may not come back.", resolvePublicIP),
 	)
 	return cmd
+}
+
+// publicIPVM is what a public IP points at: its VM, "detached" for a
+// static_nat address held without one, or a dash for the other purposes.
+func publicIPVM(p api.PublicIP) string {
+	if p.Detached() {
+		return "detached"
+	}
+	return output.Or(firstSet(p.InstanceName, p.InstanceID))
+}
+
+// publicIPState is the address's state, with "applying" while an attach or
+// detach has not reached it yet.
+func publicIPState(a *app, p api.PublicIP) string {
+	s := state(a.out, p.ObservedState, p.DesiredState)
+	if api.Applying(p.InSync) {
+		s += a.out.Dim(" (applying)")
+	}
+	return s
 }
 
 func newPublicIPsListCmd(a *app) *cobra.Command {
@@ -288,7 +315,7 @@ func newPublicIPsListCmd(a *app) *cobra.Command {
 			}
 			rows := make([][]string, len(ips))
 			for i, p := range ips {
-				rows[i] = []string{output.Or(p.Address), a.out.State(p.ObservedState), p.Purpose, output.Or(firstSet(p.NetworkName, &p.NetworkID)), output.Or(firstSet(p.InstanceName, p.InstanceID)), a.out.Dim(p.ID)}
+				rows[i] = []string{output.Or(p.Address), publicIPState(a, p), p.Purpose, output.Or(firstSet(p.NetworkName, &p.NetworkID)), publicIPVM(p), a.out.Dim(p.ID)}
 			}
 			a.out.Table([]string{"address", "state", "purpose", "network", "vm", "id"}, rows)
 			a.out.Summary(count(len(ips), "public IP"))
@@ -318,15 +345,25 @@ func newPublicIPsGetCmd(a *app) *cobra.Command {
 			if ok, err := getOne(a, cmd, c, "/public-ips/"+url.PathEscape(id), &p); !ok {
 				return err
 			}
-			a.out.Print(output.Detail{
+			sync := "yes"
+			if p.InSync == nil {
+				sync = "—"
+			} else if !*p.InSync {
+				sync = "no, an attach or detach is applying"
+			}
+			d := output.Detail{
 				Title:    output.Or(p.Address),
-				State:    state(a.out, p.ObservedState, p.DesiredState),
+				State:    publicIPState(a, p),
 				Subtitle: p.ID,
 				Sections: [][]output.Pair{
-					{{"Purpose", p.Purpose}, {"Network", output.Or(firstSet(p.NetworkName, &p.NetworkID))}, {"VM", output.Or(firstSet(p.InstanceName, p.InstanceID))}, {"Location", output.Or(p.Zone)}},
+					{{"Purpose", p.Purpose}, {"Network", output.Or(firstSet(p.NetworkName, &p.NetworkID))}, {"VM", publicIPVM(p)}, {"In sync", sync}, {"Location", output.Or(p.Zone)}},
 					{{"Created", output.When(p.CreatedAt)}},
 				},
-			})
+			}
+			if p.Detached() {
+				d.Next = [][2]string{{"Attach it", "pantech public-ips attach " + p.ID + " --vm <vm>"}, {"Or release it", "pantech public-ips delete " + p.ID}}
+			}
+			a.out.Print(d)
 			return nil
 		},
 	}
@@ -336,14 +373,24 @@ func newPublicIPsCreateCmd(a *app) *cobra.Command {
 	var network, purpose, vm string
 	var noWait bool
 	cmd := &cobra.Command{
-		Use:   "create",
-		Short: "Allocate a public IP in a VPC network",
-		Long: `Allocate a public IP in a VPC network. A static_nat address (the default)
-points at one VM, given with --vm; a port_forwarding address takes port
-forwarding rules instead.`,
-		Example: `  pantech public-ips create --network prod --vm web-1`,
-		Args:    cobra.NoArgs,
+		Use:     "create",
+		Aliases: []string{"reserve"},
+		Short:   "Reserve a public IP in a VPC network",
+		Long: `Reserve a public IP in a VPC network. A static_nat address (the default)
+maps every port to one VM: give it with --vm, or leave --vm out to reserve the
+address now and attach it later with "pantech public-ips attach". A
+port_forwarding address takes port forwarding rules, and a load_balancer
+address carries load balancers; neither takes --vm.
+
+The address is billed from now until it is released, attached or not.`,
+		Example: `  pantech public-ips create --network prod --vm web-1
+  pantech public-ips create --network prod            # reserved, attach it later
+  pantech public-ips create --network prod --purpose load_balancer`,
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if vm != "" && purpose != "static_nat" {
+				return &usageError{fmt.Errorf("--vm is for a static_nat address; a %s address takes none", purpose), cmd}
+			}
 			c, err := a.client()
 			if err != nil {
 				return err
@@ -360,16 +407,95 @@ forwarding rules instead.`,
 				}
 				body["instance_id"] = id
 			}
-			if err := a.confirm("Allocate a public IP? It is billed until released."); err != nil {
+			if err := a.confirm("Reserve a public IP? It is billed until released, attached or not."); err != nil {
 				return err
 			}
-			return a.runCreate(cmd, c, api.Request{Method: http.MethodPost, Path: "/public-ips", Body: body}, noWait, "public IP")
+			return publicIPHint(a.runCreate(cmd, c, api.Request{Method: http.MethodPost, Path: "/public-ips", Body: body}, noWait, "public IP"))
 		},
 	}
 	cmd.Flags().StringVar(&network, "network", "", "the VPC network, by id or name (required)")
-	cmd.Flags().StringVar(&purpose, "purpose", "static_nat", "static_nat or port_forwarding")
-	cmd.Flags().StringVar(&vm, "vm", "", "the VM a static_nat address points at, by id or name")
+	cmd.Flags().StringVar(&purpose, "purpose", "static_nat", "static_nat, port_forwarding or load_balancer")
+	cmd.Flags().StringVar(&vm, "vm", "", "the VM a static_nat address points at, by id or name; leave out to reserve it detached")
 	cmd.Flags().BoolVar(&noWait, "no-wait", false, "return the id without waiting")
 	_ = cmd.MarkFlagRequired("network")
 	return cmd
+}
+
+func newPublicIPsAttachCmd(a *app) *cobra.Command {
+	var vm string
+	var noWait bool
+	cmd := &cobra.Command{
+		Use:   "attach <public ip> --vm <vm>",
+		Short: "Point a static_nat public IP at a VM, keeping the address",
+		Long: `Point a static_nat public IP at a VM in the same VPC network, keeping the
+address. If it is attached to another VM it moves: you keep the same IP and
+pay for it once. The VM must not already have a static_nat address.`,
+		Example: `  pantech public-ips attach 102.211.122.90 --vm web-2`,
+		Args:    cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if vm == "" {
+				return &usageError{fmt.Errorf("give the VM with --vm"), cmd}
+			}
+			c, err := a.client()
+			if err != nil {
+				return err
+			}
+			id, err := resolvePublicIP(cmd, c, args[0])
+			if err != nil {
+				return err
+			}
+			vmID, err := resolveVM(cmd, c, vm)
+			if err != nil {
+				return err
+			}
+			req := api.Request{Method: http.MethodPost, Path: "/public-ips/" + url.PathEscape(id) + "/attach", Body: map[string]any{"instance_id": vmID}}
+			return publicIPHint(a.runWrite(cmd, c, req, noWait, verb{"Attaching", "Attached"}, args[0]+" to "+vm))
+		},
+	}
+	cmd.Flags().StringVar(&vm, "vm", "", "the VM to point it at, by id or name (required)")
+	cmd.Flags().StringVar(&vm, "instance", "", "the same as --vm")
+	cmd.Flags().BoolVar(&noWait, "no-wait", false, "return the operation id without waiting")
+	return cmd
+}
+
+func newPublicIPsDetachCmd(a *app) *cobra.Command {
+	var noWait bool
+	cmd := &cobra.Command{
+		Use:   "detach <public ip>",
+		Short: "Unmap a static_nat public IP from its VM, keeping the address",
+		Long: `Unmap a static_nat public IP from its VM. The address stays yours, and is
+still billed, until you attach it to another VM or release it with
+"pantech public-ips delete". The VM keeps running, without a public address.`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := a.client()
+			if err != nil {
+				return err
+			}
+			id, err := resolvePublicIP(cmd, c, args[0])
+			if err != nil {
+				return err
+			}
+			if err := a.confirm(fmt.Sprintf("Detach %s? Its VM loses the address; the address stays reserved and billed.", args[0])); err != nil {
+				return err
+			}
+			req := api.Request{Method: http.MethodPost, Path: "/public-ips/" + url.PathEscape(id) + "/detach"}
+			return publicIPHint(a.runWrite(cmd, c, req, noWait, verb{"Detaching", "Detached"}, args[0]))
+		},
+	}
+	cmd.Flags().BoolVar(&noWait, "no-wait", false, "return the operation id without waiting")
+	return cmd
+}
+
+// publicIPHint adds what to do next to the public IP errors that have a CLI answer.
+func publicIPHint(err error) error {
+	switch {
+	case api.IsCode(err, "INSTANCE_ALREADY_HAS_PUBLIC_IP"):
+		return &hinted{err: err, hint: "Detach the VM's own address first (pantech public-ips detach <ip>), or release it.\nSee: pantech public-ips list"}
+	case api.IsCode(err, "PUBLIC_IP_NOT_STATIC_NAT"):
+		return &hinted{err: err, hint: "Only a static_nat address is attached or detached; port forwarding and load balancer addresses use their rules."}
+	case api.IsCode(err, "PUBLIC_IP_LIMIT_EXCEEDED"):
+		return &hinted{err: err, hint: "Release an address you no longer need (pantech public-ips delete <ip>), or contact support to raise the limit.\nSee: pantech public-ips list"}
+	}
+	return err
 }

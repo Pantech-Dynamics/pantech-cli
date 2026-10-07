@@ -1,8 +1,8 @@
 # pantech
 
-The Pantech Dynamics CLI: virtual machines, managed databases, volumes,
-snapshots, networks, security groups, SSH keys and the catalogue from your
-terminal, through the [public API](https://docs.pantechdynamics.com/api).
+The Pantech Dynamics CLI: virtual machines, managed databases, managed
+Kubernetes, volumes, snapshots, networks, public IPs, load balancers, security
+groups, SSH keys and the catalogue from your terminal, through the [public API](https://docs.pantechdynamics.com/api).
 
 ```sh
 curl -fsSL https://pantechdynamics.com/install | bash
@@ -51,7 +51,9 @@ pantech db storage resize | snapshots list | get | create | delete
 pantech volumes list | get | create | attach | detach | delete
 pantech snapshots list | get | create | delete
 pantech networks list | get | create | delete | subnets list | create | delete
-pantech public-ips list | get | create | delete
+pantech public-ips list | get | create | attach | detach | delete     (alias: ips)
+pantech load-balancers list | get | create | update | delete           (alias: lb)
+pantech kubernetes versions | list | get | create | configure | upgrade | start | stop | delete | kubeconfig   (alias: k8s)
 pantech security-groups list | get | create | delete | rules set | add | remove
 pantech ssh-keys list | add | delete
 pantech plans | images | regions
@@ -102,6 +104,31 @@ naming the rules to narrow, and how to change them with
 `pantech security-groups rules remove` and `rules add`. `vm get` shows the
 interface and its address; allow it on a database with
 `pantech db access-rules add`.
+
+A static_nat public IP keeps its address across VMs: `public-ips create --network
+<net>` without `--vm` reserves one detached, `public-ips attach <ip> --vm <vm>`
+points it at a VM (moving it if it is attached elsewhere), and
+`public-ips detach <ip>` unmaps it. A held address is billed once, attached or
+not, until `public-ips delete` releases it. `list` and `get` show `detached` and
+`(applying)` while an attach or detach is still reaching the address. A VM with
+a static_nat address cannot be deleted until it is detached or released.
+
+`pantech load-balancers create --name web --public-ip <ip> --subnet <subnet>
+--port 443 [--private-port 8443] [--algorithm roundrobin|leastconn|source]
+[--allow CIDR…] [--target VM…]` spreads a port of a `load_balancer` public IP
+across VMs; `update` renames it, changes the algorithm, or replaces its targets
+(`--targets`, or `--no-targets`).
+
+`pantech kubernetes create --name prod --zone <zone> --version 1.31.2
+--node-plan <plan> [--subnet <subnet>] [--control-nodes 1|3] (--workers N |
+--autoscale MIN:MAX) [--api-allow CIDR…]` creates a cluster; every node is
+billed as a VM of the plan. `configure` (alias `scale`) sets `--workers`,
+`--autoscale MIN:MAX` or `--no-autoscale`, and `--api-allow` or
+`--api-allow-any`; `upgrade --version` takes one of the versions `get` lists as
+available. `pantech kubernetes kubeconfig <cluster> -o FILE` writes the admin
+kubeconfig readable only by you (mode 0600); `--stdout` prints it instead, and
+one of the two is required. It is a cluster-admin credential: keep it like a
+password.
 
 Every API error is printed with the API's own message, each invalid field and
 what it must be (on a `422`), and the error code and request id to quote to

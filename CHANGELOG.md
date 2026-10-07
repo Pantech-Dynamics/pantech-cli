@@ -9,6 +9,36 @@ release workflow refuses a tag that has no section here.
 
 ## Unreleased
 
+## v0.2.0 — 2026-10-08
+
+### Added
+
+- `pantech kubernetes` (or `k8s`) runs managed Kubernetes clusters:
+  `versions`, `list`, `get`, `create`, `configure`, `upgrade`, `start`, `stop`,
+  `delete` and `kubeconfig`. `create` and `configure` take a fixed `--workers`
+  count or `--autoscale MIN:MAX`, and `--api-allow` limits which addresses
+  reach the API server (VPC zones only). `kubeconfig` downloads the cluster's
+  admin kubeconfig.
+- `pantech load-balancers` (or `lb`) spreads one TCP port of a
+  `load_balancer` public IP across VMs in a VPC subnet: `list`, `get`,
+  `create`, `update` (name, algorithm or the whole set of targets) and
+  `delete`.
+- `pantech public-ips attach` and `detach` move a static_nat address between
+  VMs, or hold it without one, keeping the same address. A held address is
+  billed once, attached or not, until `public-ips delete` releases it.
+- `pantech public-ips create --purpose load_balancer` reserves an address for
+  load balancers, and `--vm` can be left out to reserve a static_nat address
+  detached.
+
+### Changed
+
+- `pantech public-ips list` and `get` show `detached` for an address held
+  without a VM, and `applying` while an attach or detach is on its way.
+- `pantech vm delete` refused because the VM still has a public IP says how
+  to detach the address to keep it, or release it.
+- A change that changes nothing now says so instead of waiting for an
+  operation that never starts.
+
 ## v0.1.6 — 2026-10-06
 
 ### Fixed

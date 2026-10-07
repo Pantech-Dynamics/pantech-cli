@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"net/http/httptest"
 	"reflect"
 	"strings"
@@ -16,6 +17,7 @@ import (
 	"github.com/Pantech-Dynamics/pantech-cli/internal/api"
 	"github.com/Pantech-Dynamics/pantech-cli/internal/config"
 	"github.com/Pantech-Dynamics/pantech-cli/internal/output"
+	"github.com/Pantech-Dynamics/pantech-cli/internal/update"
 )
 
 const (
@@ -126,7 +128,7 @@ func TestOpenSSHAccess(t *testing.T) {
 	f.on("POST /instances/vm_1/ssh-access", 202, `{"operation_id":"op_1","resource_id":"sshg_1","status":"submitting"}`).
 		on("GET /operations/op_1", 200, `{"id":"op_1","status":"submitted"}`).
 		on("GET /operations/op_1", 200, `{"id":"op_1","status":"succeeded"}`).
-		on("GET /instances/vm_1/ssh-access/sshg_1", 200, `{"id":"sshg_1","instance_id":"vm_1","status":"active","host":"102.211.122.76","port":2222,"expires_at":"2026-10-05T10:15:00Z"}`).
+		on("GET /instances/vm_1/ssh-access/sshg_1", 200, `{"id":"sshg_1","instance_id":"vm_1","status":"active","host":"203.0.113.76","port":2222,"expires_at":"2026-10-05T10:15:00Z"}`).
 		on("DELETE /instances/vm_1/ssh-access/sshg_1", 202, `{"operation_id":"op_2","resource_id":"sshg_1","status":"submitting"}`).
 		on("GET /operations/op_2", 200, `{"id":"op_2","status":"succeeded"}`)
 	a, cmd := testApp(t, srv)
@@ -134,7 +136,7 @@ func TestOpenSSHAccess(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := sshArgv("ubuntu", grant, []string{"-A"}); !reflect.DeepEqual(got, []string{"ssh", "-p", "2222", "ubuntu@102.211.122.76", "-A"}) {
+	if got := sshArgv("ubuntu", grant, []string{"-A"}); !reflect.DeepEqual(got, []string{"ssh", "-p", "2222", "ubuntu@203.0.113.76", "-A"}) {
 		t.Fatalf("argv = %v", got)
 	}
 	if err := a.revokeSSHAccess(cmd, mustClient(t, a), "vm_1", grant.ID); err != nil {
@@ -151,12 +153,12 @@ func TestOpenSSHAccessFallsBackToTheVMAddress(t *testing.T) {
 		on("GET /operations/op_1", 200, `{"id":"op_1","status":"succeeded"}`).
 		on("GET /instances/vm_1/ssh-access/sshg_1", 200, `{"id":"sshg_1","instance_id":"vm_1","status":"active","host":null,"port":null}`)
 	a, cmd := testApp(t, srv)
-	addr := "102.211.122.76"
+	addr := "203.0.113.76"
 	grant, err := a.openSSHAccess(cmd, mustClient(t, a), &api.Instance{ID: "vm_1", Name: "web-1", PrivateIPv4: &addr})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := sshArgv("root", grant, nil); !reflect.DeepEqual(got, []string{"ssh", "root@102.211.122.76"}) {
+	if got := sshArgv("root", grant, nil); !reflect.DeepEqual(got, []string{"ssh", "root@203.0.113.76"}) {
 		t.Fatalf("argv = %v", got)
 	}
 }
@@ -170,6 +172,70 @@ func TestOpenSSHAccessFailedOperation(t *testing.T) {
 	var failed *api.OperationFailed
 	if !errors.As(err, &failed) {
 		t.Fatalf("err = %v, want *api.OperationFailed", err)
+	}
+}
+
+func TestSSHTargetFallsBackWhenAccessIsRefused(t *testing.T) {
+	for _, c := range []struct {
+		name, status, body string
+		code               int
+	}{
+		{"the VM shares its security group", "POST", `{"status":409,"code":"SECURITY_GROUP_SHARED","detail":"Another VM uses this security group."}`, 409},
+		{"the key cannot write", "POST", `{"status":403,"code":"INSUFFICIENT_SCOPE","detail":"This key lacks the write scope."}`, 403},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			f, srv := newFakeAPI(t)
+			f.on("POST /instances/vm_1/ssh-access", c.code, c.body)
+			a, cmd := testApp(t, srv)
+			addr := "203.0.113.76"
+			grant, opened, err := a.sshTarget(cmd, mustClient(t, a), &api.Instance{ID: "vm_1", Name: "web-1", PrivateIPv4: &addr})
+			if err != nil || opened {
+				t.Fatalf("opened %v, err %v: want the VM's address", opened, err)
+			}
+			if got := sshArgv("ubuntu", grant, nil); !reflect.DeepEqual(got, []string{"ssh", "ubuntu@203.0.113.76"}) {
+				t.Fatalf("argv = %v", got)
+			}
+		})
+	}
+}
+
+func TestSSHTargetDoesNotFallBack(t *testing.T) {
+	addr := "203.0.113.76"
+	for _, c := range []struct {
+		name string
+		vm   api.Instance
+		code int
+		body string
+	}{
+		{"the key was refused", api.Instance{ID: "vm_1", Name: "web-1", PrivateIPv4: &addr}, 401, `{"status":401,"code":"UNAUTHORIZED","detail":"Invalid key."}`},
+		{"no address to fall back to", api.Instance{ID: "vm_1", Name: "web-1"}, 409, `{"status":409,"code":"SECURITY_GROUP_SHARED","detail":"Shared."}`},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			f, srv := newFakeAPI(t)
+			f.on("POST /instances/vm_1/ssh-access", c.code, c.body)
+			a, cmd := testApp(t, srv)
+			if _, _, err := a.sshTarget(cmd, mustClient(t, a), &c.vm); err == nil {
+				t.Fatal("want the error, not a direct connection")
+			}
+		})
+	}
+}
+
+// Ctrl+C during a --revoke session cancels the command's context; the grant
+// must be revoked all the same.
+func TestRevokeSSHAccessAfterInterrupt(t *testing.T) {
+	f, srv := newFakeAPI(t)
+	f.on("DELETE /instances/vm_1/ssh-access/sshg_1", 202, `{"operation_id":"op_2","resource_id":"sshg_1","status":"submitting"}`).
+		on("GET /operations/op_2", 200, `{"id":"op_2","status":"succeeded"}`)
+	a, cmd := testApp(t, srv)
+	interrupted, cancel := context.WithCancel(context.Background())
+	cancel()
+	cmd.SetContext(interrupted)
+	if err := a.revokeSSHAccess(cmd, mustClient(t, a), "vm_1", "sshg_1"); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.sent("DELETE", "/instances/vm_1/ssh-access/sshg_1")) != 1 || len(f.sent("GET", "/operations/op_2")) == 0 {
+		t.Fatal("the grant was not revoked and waited for")
 	}
 }
 
@@ -345,6 +411,20 @@ func TestDBPasswordReset(t *testing.T) {
 	}
 }
 
+func TestDBPasswordResetWithNoOperation(t *testing.T) {
+	f, srv := newFakeAPI(t)
+	f.on("POST /databases/db_1/reset-password", 202, `{"operation_id":"","resource_id":"db_1","status":"succeeded","password_returned":true,"password":"`+generated+`"}`)
+	for _, args := range [][]string{nil, {"--no-wait"}} {
+		r := run(t, srv, "", append([]string{"db", "password", "reset", "db_1", "--yes"}, args...)...)
+		if r.err != nil || r.stdout != generated+"\n" {
+			t.Fatalf("%v: stdout %q err %v", args, r.stdout, r.err)
+		}
+		if strings.Contains(r.stderr, "operations wait") {
+			t.Fatalf("%v: suggests following an operation that has no id: %q", args, r.stderr)
+		}
+	}
+}
+
 func TestDBPasswordSet(t *testing.T) {
 	f, srv := newFakeAPI(t)
 	f.on("PUT /databases/db_1/password", 202, `{"operation_id":"op_4","resource_id":"db_1","status":"submitting"}`).on("GET /operations/op_4", 200, `{"id":"op_4","status":"succeeded"}`)
@@ -498,7 +578,7 @@ func TestResourceLists(t *testing.T) {
 		{[]string{"volumes", "list"}, "GET /volumes", `{"data":[{"id":"vol_1","name":"data","size_gb":5,"disk_offering_slug":"small-5gb","attached_instance_name":"web-1","observed_state":"active"}],"next_cursor":null}`, []string{"data", "5 GB", "small-5gb", "web-1", "vol_1"}},
 		{[]string{"snapshots", "list"}, "GET /snapshots", `{"data":[{"id":"snap_1","name":"nightly","volume_id":"vol_1","volume_name":"data","size_bytes":2040109465,"observed_state":"active"}],"next_cursor":null}`, []string{"nightly", "volume data", "1.9 GB", "snap_1"}},
 		{[]string{"networks", "list"}, "GET /networks", `{"data":[{"id":"net_1","name":"prod","cidr":"10.0.0.0/16","zone":"af-abj-2","observed_state":"active"}],"next_cursor":null}`, []string{"prod", "10.0.0.0/16", "af-abj-2", "net_1"}},
-		{[]string{"public-ips", "list"}, "GET /public-ips", `{"data":[{"id":"pip_1","network_id":"net_1","network_name":"prod","purpose":"static_nat","address":"102.211.122.90","instance_name":"web-1","observed_state":"active"}],"next_cursor":null}`, []string{"102.211.122.90", "static_nat", "prod", "web-1", "pip_1"}},
+		{[]string{"public-ips", "list"}, "GET /public-ips", `{"data":[{"id":"pip_1","network_id":"net_1","network_name":"prod","purpose":"static_nat","address":"203.0.113.90","instance_name":"web-1","observed_state":"active"}],"next_cursor":null}`, []string{"203.0.113.90", "static_nat", "prod", "web-1", "pip_1"}},
 		{[]string{"security-groups", "list"}, "GET /security-groups", `{"data":[{"id":"sg_1","name":"default","rules":[{"direction":"ingress","protocol":"icmp","port_range":"","cidr":"0.0.0.0/0"}],"observed_state":"active"}],"next_cursor":null}`, []string{"default", "sg_1"}},
 		{[]string{"db", "orders", "list"}, "GET /database-orders", `{"data":[{"id":"ord_9","database_id":"db_1","status":"provisioned","amount_minor":1200000,"currency":"NGN"}],"next_cursor":null}`, []string{"ord_9", "db_1", "NGN 12,000.00"}},
 	} {
@@ -630,5 +710,56 @@ func TestDBGetShowsWhatSecurityGroupsAdd(t *testing.T) {
 		if !strings.Contains(r.stdout, want) {
 			t.Fatalf("db get lacks %q:\n%s", want, r.stdout)
 		}
+	}
+}
+
+func TestUpgradeCheck(t *testing.T) {
+	dl := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/latest.txt" {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = w.Write([]byte("v0.1.5\n"))
+	}))
+	t.Cleanup(dl.Close)
+	oldURL, oldVersion := update.BaseURL, Version
+	update.BaseURL = dl.URL
+	t.Cleanup(func() { update.BaseURL, Version = oldURL, oldVersion })
+	_, srv := newFakeAPI(t)
+
+	Version = "v0.1.4"
+	r := run(t, srv, "", "upgrade", "--check")
+	if r.err != nil || r.stdout != "v0.1.5\n" || !strings.Contains(r.stderr, "pantech upgrade") {
+		t.Fatalf("stdout %q stderr %q err %v", r.stdout, r.stderr, r.err)
+	}
+
+	Version = "v0.1.5"
+	if r := run(t, srv, "", "upgrade"); r.err != nil || !strings.Contains(r.stderr, "is the latest version") {
+		t.Fatalf("stderr %q err %v", r.stderr, r.err)
+	}
+
+	Version = "dev"
+	if r := run(t, srv, "", "upgrade"); r.err == nil || !strings.Contains(r.err.Error(), "pantech upgrade v0.1.5") {
+		t.Fatalf("a dev build: err %v", r.err)
+	}
+}
+
+func TestUpdateNotice(t *testing.T) {
+	oldVersion := Version
+	t.Cleanup(func() { Version = oldVersion })
+	Version = "v0.1.4"
+	var errOut bytes.Buffer
+	a := &app{out: &output.Printer{Out: &bytes.Buffer{}, Err: &errOut}}
+	found := make(chan string, 1)
+	found <- "v0.1.5"
+	a.updateNotice(found)
+	if !strings.Contains(errOut.String(), "pantech v0.1.5 is out (you have v0.1.4)") {
+		t.Fatalf("stderr %q", errOut.String())
+	}
+	errOut.Reset()
+	found <- "v0.1.4"
+	a.updateNotice(found)
+	if errOut.Len() != 0 {
+		t.Fatalf("a notice with nothing newer: %q", errOut.String())
 	}
 }

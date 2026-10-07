@@ -36,4 +36,6 @@ install.sh          what https://pantechdynamics.com/install serves
   exchange is a change to both, and to that document.
 - **Passwords never in argv, files, config or logs.** Read them from stdin
   (`--password-stdin`); print a generated one once, alone on stdout.
+- **A change people will notice goes in `CHANGELOG.md`**, under Unreleased, in
+  the same pull request.
 - **No attribution trailers** in commits or pull requests.

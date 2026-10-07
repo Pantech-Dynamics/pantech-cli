@@ -35,7 +35,6 @@ func parse(iso *string) (time.Time, bool) {
 	return t, err == nil
 }
 
-// relative is "just now", "5 min ago", "in 3 months".
 func relative(t time.Time) string {
 	d := now().Sub(t)
 	future := d < 0

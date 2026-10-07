@@ -158,7 +158,6 @@ func newSSHKeysDeleteCmd(a *app) *cobra.Command {
 	}
 }
 
-// resolveSSHKey takes an id (sshk_…) or a name and returns the id.
 func resolveSSHKey(cmd *cobra.Command, c *api.Client, ref string) (string, error) {
 	if strings.HasPrefix(ref, "sshk_") {
 		return ref, nil

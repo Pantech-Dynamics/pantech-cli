@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -21,8 +22,36 @@ func resolveNetwork(cmd *cobra.Command, c *api.Client, ref string) (string, erro
 	return resolve(cmd, c, networkKind, ref, func(n api.Network) (string, string) { return n.ID, n.Name })
 }
 
-func resolveSubnet(_ *cobra.Command, _ *api.Client, ref string) (string, error) {
-	return ref, nil
+// resolveSubnet takes an id (snet_…) or a name. Subnets are listed only by
+// network, so a name is looked for in every network's.
+func resolveSubnet(cmd *cobra.Command, c *api.Client, ref string) (string, error) {
+	if strings.HasPrefix(ref, subnetKind.prefix) {
+		return ref, nil
+	}
+	nets, err := api.ListAll[api.Network](ctx(cmd), c, "/networks", nil)
+	if err != nil {
+		return "", err
+	}
+	var ids []string
+	for _, n := range nets {
+		subnets, err := api.ListAll[api.Subnet](ctx(cmd), c, "/networks/"+url.PathEscape(n.ID)+"/subnets", nil)
+		if err != nil {
+			return "", err
+		}
+		for _, s := range subnets {
+			if s.Name == ref {
+				ids = append(ids, s.ID)
+			}
+		}
+	}
+	switch len(ids) {
+	case 0:
+		return "", fmt.Errorf("no subnet named %q\nSee: %s", ref, subnetKind.listCmd)
+	case 1:
+		return ids[0], nil
+	default:
+		return "", fmt.Errorf("%d subnets are named %q: use its id\n(%s)", len(ids), ref, strings.Join(ids, ", "))
+	}
 }
 
 // resolvePublicIP takes an id, or the address itself.
@@ -211,9 +240,7 @@ func newSubnetsCmd(a *app) *cobra.Command {
 	create.Flags().BoolVar(&noWait, "no-wait", false, "return the id without waiting")
 	_ = create.MarkFlagRequired("name")
 	_ = create.MarkFlagRequired("cidr")
-	remove := deleteCmd(a, subnetKind, "It must have no VMs.", resolveSubnet)
-	remove.Short = "Delete a subnet by ID"
-	cmd.AddCommand(list, create, remove)
+	cmd.AddCommand(list, create, deleteCmd(a, subnetKind, "It must have no VMs.", resolveSubnet))
 	return cmd
 }
 

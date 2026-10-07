@@ -41,12 +41,10 @@ func New(jsonOut, quiet bool) *Printer {
 	}
 }
 
-// Interactive reports whether it is fine to ask a question.
 func Interactive() bool {
 	return term.IsTerminal(int(os.Stdin.Fd())) && term.IsTerminal(int(os.Stderr.Fd()))
 }
 
-// RawJSON prints an API body, indented.
 func (p *Printer) RawJSON(body []byte) {
 	var buf bytes.Buffer
 	if json.Indent(&buf, body, "", "  ") != nil {
@@ -57,24 +55,19 @@ func (p *Printer) RawJSON(body []byte) {
 	_, _ = p.Out.Write(buf.Bytes())
 }
 
-// Value prints any value as JSON.
 func (p *Printer) Value(v any) {
 	data, _ := json.MarshalIndent(v, "", "  ")
 	_, _ = fmt.Fprintln(p.Out, string(data))
 }
 
-// Line prints a line of results to stdout.
 func (p *Printer) Line(format string, a ...any) { fmt.Fprintf(p.Out, format+"\n", a...) }
 
-// Note prints a hint or progress line to stderr.
 func (p *Printer) Note(format string, a ...any) { fmt.Fprintf(p.Err, format+"\n", a...) }
 
-// Success is a done line on stderr: ✓ and the sentence.
 func (p *Printer) Success(format string, a ...any) {
 	fmt.Fprintf(p.Err, "%s %s\n", paint(p.errColor, green, "✓"), fmt.Sprintf(format, a...))
 }
 
-// Warn is a caution on stderr: ! and the sentence, in yellow.
 func (p *Printer) Warn(format string, a ...any) {
 	if p.Quiet || p.JSON {
 		return
@@ -82,7 +75,6 @@ func (p *Printer) Warn(format string, a ...any) {
 	fmt.Fprintf(p.Err, "%s %s\n", paint(p.errColor, yellow, "!"), fmt.Sprintf(format, a...))
 }
 
-// Next suggests the command to run next, dimmed, on stderr.
 func (p *Printer) Next(label, command string) {
 	if p.Quiet || p.JSON {
 		return
@@ -104,7 +96,6 @@ func (p *Printer) Summary(parts ...string) {
 	fmt.Fprintf(p.Err, "\n%s\n", paint(p.errColor, dim, strings.Join(kept, " · ")))
 }
 
-// Styles for values in stdout: each is a no-op without colour.
 func (p *Printer) Dim(s string) string  { return paint(p.color, dim, s) }
 func (p *Printer) Bold(s string) string { return paint(p.color, bold, s) }
 
@@ -162,7 +153,6 @@ func (p *Printer) Table(header []string, rows [][]string) {
 	_, _ = io.WriteString(p.Out, b.String())
 }
 
-// Pair is one label and its value in a detail view.
 type Pair [2]string
 
 // Detail is one resource: a title line (name and state), a subtitle (its
@@ -173,7 +163,6 @@ type Detail struct {
 	Next                   [][2]string // label, command
 }
 
-// Print writes the detail view. Labels line up across every section.
 func (p *Printer) Print(d Detail) {
 	var b strings.Builder
 	b.WriteString(p.Bold(d.Title))
@@ -226,7 +215,6 @@ func (p *Printer) Error(err error) {
 	}
 }
 
-// Or returns *s, or a dash when it is nil or empty.
 func Or(s *string) string {
 	if s == nil || *s == "" {
 		return "—"

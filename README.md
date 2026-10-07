@@ -46,7 +46,7 @@ pantech vm list | get | create | start | stop | reboot | delete | ssh    (alias:
 pantech vm private-network attach | detach
 pantech vm orders list | get
 pantech db engines | list | get | create | start | stop | delete          (alias: database)
-pantech db access-rules set | security-groups set | password set | password reset | orders list | get
+pantech db access-rules set | add | remove | security-groups set | password set | password reset | orders list | get
 pantech db storage resize | snapshots list | get | create | delete
 pantech volumes list | get | create | attach | detach | delete
 pantech snapshots list | get | create | delete
@@ -54,12 +54,19 @@ pantech networks list | get | create | delete | subnets list | create | delete
 pantech public-ips list | get | create | attach | detach | delete     (alias: ips)
 pantech load-balancers list | get | create | update | delete           (alias: lb)
 pantech kubernetes versions | list | get | create | configure | upgrade | start | stop | delete | kubeconfig   (alias: k8s)
-pantech security-groups list | get | create | delete | rules set
+pantech security-groups list | get | create | delete | rules set | add | remove
 pantech ssh-keys list | add | delete
 pantech plans | images | regions
 pantech operations get | wait
+pantech upgrade [version] [--check]                       (alias: update)
 pantech api <METHOD> <path> [--data JSON] [-f key=value]   anything else in the API
 ```
+
+`pantech upgrade` replaces the CLI with the latest release, after checking the
+download against the release's `SHA256SUMS`. When a newer version is out, the
+CLI says so after a command, checking at most once a day; not in CI, not when
+stderr is not a terminal, not with `--json` or `--quiet`, and never with
+`PANTECH_NO_UPDATE_NOTIFIER=1`.
 
 Every command takes `--json` (the API's own JSON), `--quiet` (ids only) and `--yes`
 (no question before something that deletes or costs money; required when there
@@ -68,7 +75,13 @@ pass `--no-wait`.
 
 `pantech vm ssh` opens port 22 to your address for 15 minutes through the API
 (SSH access is closed by default), then runs your own `ssh`; `--revoke` closes it
-again when the session ends.
+again when the session ends, even one ended with Ctrl+C. When the platform will
+not open access (the VM shares its security group with another, or the key is
+read-only), it says why and connects to the VM's address directly, which works
+if the security group already allows port 22 from you.
+
+`rules set` and `access-rules set` replace the whole list; `add` and `remove`
+change only the rules given and keep the rest.
 
 Database passwords are never taken as an argument: `--password-stdin` reads one
 from a hidden prompt or a pipe. A password the platform generates (on `db create`
@@ -88,8 +101,9 @@ its zone's private database network and prints the address to allow on a
 database as a `/32` access rule. The VM's security group must allow nothing
 from that network's range (the zone's `private network` in `pantech regions`); when it does, the CLI prints the API's message,
 naming the rules to narrow, and how to change them with
-`pantech security-groups rules set`. `vm get` shows the interface and its
-address.
+`pantech security-groups rules remove` and `rules add`. `vm get` shows the
+interface and its address; allow it on a database with
+`pantech db access-rules add`.
 
 A static_nat public IP keeps its address across VMs: `public-ips create --network
 <net>` without `--vm` reserves one detached, `public-ips attach <ip> --vm <vm>`
@@ -148,15 +162,21 @@ The CLI always signs in through `https://console.pantechdynamics.com` and calls
 another config directory, and `PANTECH_NO_KEYRING=1` keeps it out of your
 keychain, for testing.
 
-The console's half of the sign-in is specified in
-[`docs/cli-auth-protocol.md`](docs/cli-auth-protocol.md): the routes, parameters,
-PKCE check and token format pantech-console must implement.
+The sign-in protocol, both the CLI's half and pantech-console's, is described in
+[`docs/cli-auth-protocol.md`](docs/cli-auth-protocol.md).
 
 ## Releasing
+
+Pull requests that change what the CLI does add a line under **Unreleased** in
+[`CHANGELOG.md`](CHANGELOG.md). To release, rename that heading to the version
+and date (`## v0.2.0 — 2026-11-02`) in a pull request, merge it, then tag `main`:
 
 ```sh
 git tag v0.2.0 && git push origin v0.2.0
 ```
+
+The release fails if `CHANGELOG.md` has no section for the tag (pre-releases
+need none).
 
 `.github/workflows/release.yml` tests and builds every platform on a GitHub
 runner (`make dist`), then a runner on the website server, labelled

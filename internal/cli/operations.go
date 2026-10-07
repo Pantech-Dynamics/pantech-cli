@@ -89,7 +89,6 @@ func printOperation(a *app, op *api.Operation) {
 	a.out.Print(d)
 }
 
-// humanKind is an operation's kind as words: stop_instance → Stop instance.
 func humanKind(kind string) string {
 	s := strings.ReplaceAll(kind, "_", " ")
 	if s == "" {

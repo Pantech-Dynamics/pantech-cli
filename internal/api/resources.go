@@ -97,7 +97,105 @@ type PublicIP struct {
 	Zone          *string `json:"zone"`
 	DesiredState  string  `json:"desired_state"`
 	ObservedState string  `json:"observed_state"`
-	CreatedAt     *string `json:"created_at"`
+	// InSync is false while an attach or detach has not reached the address.
+	InSync    *bool   `json:"in_sync"`
+	CreatedAt *string `json:"created_at"`
+}
+
+// Applying reports whether a change has not reached the resource yet:
+// in_sync is false. A missing in_sync is taken as in sync.
+func Applying(inSync *bool) bool { return inSync != nil && !*inSync }
+
+// Detached reports whether a static_nat address is held without a VM.
+func (p *PublicIP) Detached() bool {
+	return p.Purpose == "static_nat" && firstNonEmpty(p.InstanceID, p.InstanceName) == ""
+}
+
+func firstNonEmpty(ss ...*string) string {
+	for _, s := range ss {
+		if s != nil && *s != "" {
+			return *s
+		}
+	}
+	return ""
+}
+
+type LoadBalancerMember struct {
+	InstanceID    string  `json:"instance_id"`
+	InstanceName  *string `json:"instance_name"`
+	DesiredState  string  `json:"desired_state"`
+	ObservedState string  `json:"observed_state"`
+}
+
+type LoadBalancer struct {
+	ID              string               `json:"id"`
+	Name            string               `json:"name"`
+	PublicIPID      string               `json:"public_ip_id"`
+	PublicIPAddress *string              `json:"public_ip_address"`
+	NetworkID       *string              `json:"network_id"`
+	SubnetID        string               `json:"subnet_id"`
+	Protocol        string               `json:"protocol"`
+	Algorithm       string               `json:"algorithm"`
+	PublicPort      int                  `json:"public_port"`
+	PrivatePort     int                  `json:"private_port"`
+	CIDRList        []string             `json:"cidr_list"`
+	Members         []LoadBalancerMember `json:"members"`
+	DesiredState    string               `json:"desired_state"`
+	ObservedState   string               `json:"observed_state"`
+	InSync          *bool                `json:"in_sync"`
+	CreatedAt       *string              `json:"created_at"`
+}
+
+type KubernetesVersion struct {
+	ID          string `json:"id"`
+	ZoneID      string `json:"zone_id"`
+	Version     string `json:"version"`
+	Status      string `json:"status"`
+	MinCPU      int    `json:"min_cpu"`
+	MinMemoryMB int    `json:"min_memory_mb"`
+}
+
+// KubernetesVersionList is the versions list: not paged, with the zones
+// that offer 3 control nodes.
+type KubernetesVersionList struct {
+	Data      []KubernetesVersion `json:"data"`
+	HAZoneIDs []string            `json:"ha_zone_ids"`
+}
+
+type KubernetesAutoscaling struct {
+	Enabled    bool `json:"enabled"`
+	MinWorkers int  `json:"min_workers"`
+	MaxWorkers int  `json:"max_workers"`
+}
+
+type KubernetesCluster struct {
+	ID                  string  `json:"id"`
+	Name                string  `json:"name"`
+	ZoneID              string  `json:"zone_id"`
+	KubernetesVersionID string  `json:"kubernetes_version_id"`
+	KubernetesVersion   string  `json:"kubernetes_version"`
+	NetworkID           *string `json:"network_id"`
+	SubnetID            *string `json:"subnet_id"`
+	NodePlanID          string  `json:"node_plan_id"`
+	Node                struct {
+		VCPU     int `json:"vcpu"`
+		MemoryMB int `json:"memory_mb"`
+		DiskGB   int `json:"disk_gb"`
+	} `json:"node"`
+	ControlNodes      int                   `json:"control_nodes"`
+	Workers           int                   `json:"workers"`
+	Nodes             int                   `json:"nodes"`
+	DesiredState      string                `json:"desired_state"`
+	ObservedState     string                `json:"observed_state"`
+	InSync            *bool                 `json:"in_sync"`
+	FailureCode       *string               `json:"failure_code"`
+	FailureReason     *string               `json:"failure_reason"`
+	AvailableUpgrades []KubernetesVersion   `json:"available_upgrades"`
+	Autoscaling       KubernetesAutoscaling `json:"autoscaling"`
+	APIAllowedCIDRs   []string              `json:"api_allowed_cidrs"`
+	Endpoint          *string               `json:"endpoint"`
+	VolumeStorageGB   int                   `json:"volume_storage_gb"`
+	CreatedAt         *string               `json:"created_at"`
 }
 
 type DatabaseEngine struct {

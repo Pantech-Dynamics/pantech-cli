@@ -437,7 +437,11 @@ func newVMDeleteCmd(a *app) *cobra.Command {
 			if err := a.confirm(fmt.Sprintf("Delete %s (%s)? Its root disk is erased and cannot be recovered.", args[0], id)); err != nil {
 				return err
 			}
-			return a.runWrite(cmd, c, api.Request{Method: http.MethodDelete, Path: "/instances/" + url.PathEscape(id)}, noWait, verb{"Deleting", "Deleted"}, args[0])
+			err = a.runWrite(cmd, c, api.Request{Method: http.MethodDelete, Path: "/instances/" + url.PathEscape(id)}, noWait, verb{"Deleting", "Deleted"}, args[0])
+			if api.IsCode(err, "INSTANCE_HAS_PUBLIC_IP") {
+				return &hinted{err: err, hint: "Detach its public IP to keep the address (pantech public-ips detach <ip>), or release it (pantech public-ips delete <ip>), then delete the VM.\nSee: pantech public-ips list"}
+			}
+			return err
 		},
 	}
 	cmd.Flags().BoolVar(&noWait, "no-wait", false, "return the operation id without waiting")
@@ -453,9 +457,13 @@ func (a *app) runWrite(cmd *cobra.Command, c *api.Client, req api.Request, noWai
 		return err
 	}
 	if noWait || accepted.OperationID == "" {
-		if a.out.JSON {
+		switch {
+		case a.out.JSON:
 			a.out.RawJSON(res.Body)
-		} else {
+		case accepted.OperationID == "":
+			// The API answers a change that changes nothing with no operation.
+			a.out.Note("Nothing to change: %s is already as asked.", subject)
+		default:
 			a.out.Line("%s", accepted.OperationID)
 			a.out.Next("Follow it", "pantech operations wait "+accepted.OperationID)
 		}

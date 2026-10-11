@@ -73,6 +73,26 @@ Every command takes `--json` (the API's own JSON), `--quiet` (ids only) and `--y
 is no terminal to ask in). Writes wait for their operation to finish unless you
 pass `--no-wait`.
 
+### Encrypted VMs
+
+An encrypted VM keeps its disk, its snapshots and backups encrypted at rest,
+each VM with its own key. `pantech images` marks the encrypted images in its
+`encrypted` column; they are listed only once encrypted VMs are enabled for
+your organization (on request), and only in the zones that carry them. Create
+one with the encrypted image's slug, or with `--encrypted`, which picks the
+encrypted variant of `--image`:
+
+```sh
+pantech vm create --name vault-1 --plan starter --image ubuntu-24-04 --encrypted --ssh-key deploy
+pantech vm create --name vault-1 --plan starter --image ubuntu-24-04-encrypted --ssh-key deploy   # the same
+```
+
+`--encrypted` fails, before ordering anything, when the image has no encrypted
+variant available to your organization. `pantech vm get` shows an encrypted
+VM's image as `ubuntu-24-04-encrypted (encrypted)`. See
+[Encrypted VMs](https://docs.pantechdynamics.com/compute/encrypted-vms) for how
+they boot and how to encrypt data volumes.
+
 `pantech vm ssh` opens port 22 to your address for 15 minutes through the API
 (SSH access is closed by default), then runs your own `ssh`; `--revoke` closes it
 again when the session ends, even one ended with Ctrl+C. When the platform will
@@ -169,10 +189,15 @@ The sign-in protocol, both the CLI's half and pantech-console's, is described in
 
 Pull requests that change what the CLI does add a line under **Unreleased** in
 [`CHANGELOG.md`](CHANGELOG.md). To release, rename that heading to the version
-and date (`## v0.2.0 — 2026-11-02`) in a pull request, merge it, then tag `main`:
+and date (`## v0.3.0 — 2026-11-02`), keep an empty `## Unreleased` above it, and
+merge to `main`. `.github/workflows/auto-release.yml` sees a version that has no
+tag yet, tags it and runs the release; a push whose newest version is already
+tagged releases nothing.
+
+Tagging by hand still works, for a pre-release for example:
 
 ```sh
-git tag v0.2.0 && git push origin v0.2.0
+git tag v0.3.0-rc.1 && git push origin v0.3.0-rc.1
 ```
 
 The release fails if `CHANGELOG.md` has no section for the tag (pre-releases

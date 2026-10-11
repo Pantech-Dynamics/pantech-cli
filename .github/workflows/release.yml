@@ -6,6 +6,16 @@ name: Release
 on:
   push:
     tags: ["v*"]
+  # Called by auto-release.yml when a push to main adds a new version to
+  # CHANGELOG.md. A tag pushed by that workflow cannot trigger this one
+  # itself (GitHub never starts workflows from GITHUB_TOKEN pushes), so it
+  # calls this workflow directly with the version it tagged.
+  workflow_call:
+    inputs:
+      version:
+        description: The tag to release, such as v0.3.0
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -20,6 +30,8 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: refs/tags/${{ inputs.version || github.ref_name }}
 
       - uses: actions/setup-go@v6
         with:
@@ -27,7 +39,7 @@ jobs:
 
       - name: CHANGELOG.md has this version
         env:
-          VERSION: ${{ github.ref_name }}
+          VERSION: ${{ inputs.version || github.ref_name }}
         run: |
           case "$VERSION" in
             *-*) echo "a pre-release: no changelog section needed" ;;
@@ -38,7 +50,7 @@ jobs:
 
       - run: bash -n install.sh
 
-      - run: make dist VERSION=${{ github.ref_name }}
+      - run: make dist VERSION=${{ inputs.version || github.ref_name }}
 
       - uses: actions/upload-artifact@v7
         with:
@@ -61,6 +73,8 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: refs/tags/${{ inputs.version || github.ref_name }}
 
       - uses: actions/download-artifact@v8
         with:
@@ -72,7 +86,7 @@ jobs:
       - name: Check nginx serves it
         shell: bash
         env:
-          VERSION: ${{ github.ref_name }}
+          VERSION: ${{ inputs.version || github.ref_name }}
         run: |
           set -euo pipefail
           served() { curl --fail --silent --show-error -H 'Host: pantechdynamics.com' "http://127.0.0.1$1"; }

@@ -29,6 +29,7 @@ type Instance struct {
 	Name                string  `json:"name"`
 	PlanSlug            *string `json:"plan_slug"`
 	ImageSlug           *string `json:"image_slug"`
+	Encrypted           bool    `json:"encrypted"`
 	Region              *string `json:"region"`
 	Zone                *string `json:"zone"`
 	NetworkID           *string `json:"network_id"`
@@ -86,6 +87,11 @@ type Image struct {
 	Name    string   `json:"name"`
 	Version string   `json:"version"`
 	Zones   []string `json:"zones"`
+	// Encrypted is an image whose disk is encrypted at rest, each VM with its
+	// own key; EncryptedVariantOf is then the slug of the plain image it pairs
+	// with. Both are absent from an older API, which reads as plain.
+	Encrypted          bool    `json:"encrypted"`
+	EncryptedVariantOf *string `json:"encrypted_variant_of"`
 }
 
 type Region struct {

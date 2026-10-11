@@ -58,7 +58,10 @@ func newImagesCmd(a *app) *cobra.Command {
 	return &cobra.Command{
 		Use:   "images",
 		Short: "List the operating system images",
-		Args:  cobra.NoArgs,
+		Long: `List the operating system images. An encrypted image keeps the VM's disk,
+its snapshots and backups encrypted at rest, each VM with its own key; it is
+listed only once encrypted VMs are enabled for your organization.`,
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			c, err := a.client()
 			if err != nil {
@@ -73,9 +76,13 @@ func newImagesCmd(a *app) *cobra.Command {
 			}
 			rows := make([][]string, len(images))
 			for i, img := range images {
-				rows[i] = []string{img.Slug, img.Name + " " + img.Version, a.out.Dim(strings.Join(img.Zones, ", "))}
+				encrypted := a.out.Dim("—")
+				if img.Encrypted {
+					encrypted = "yes"
+				}
+				rows[i] = []string{img.Slug, img.Name + " " + img.Version, encrypted, a.out.Dim(strings.Join(img.Zones, ", "))}
 			}
-			a.out.Table([]string{"image", "name", "zones"}, rows)
+			a.out.Table([]string{"image", "name", "encrypted", "zones"}, rows)
 			a.out.Summary(count(len(images), "image"))
 			return nil
 		},

@@ -9,6 +9,15 @@ release workflow refuses a tag that has no section here.
 
 ## Unreleased
 
+## v0.3.0 — 2026-10-11
+
+### Added
+
+- Encrypted VMs: `pantech images` has an `encrypted` column, `pantech vm create
+  --encrypted` picks the encrypted variant of `--image` (or says why there is
+  none), and `pantech vm get` marks an encrypted VM's image. An encrypted
+  image's slug, such as `ubuntu-24-04-encrypted`, also works with `--image`.
+
 ## v0.2.0 — 2026-10-08
 
 ### Added

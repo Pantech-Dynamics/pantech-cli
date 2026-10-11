@@ -149,12 +149,16 @@ func vmDetail(out *output.Printer, vm *api.Instance) output.Detail {
 	if vm.PrivateNetworkState != "" {
 		network = append(network, output.Pair{"Private network", privateNetwork(out, vm)})
 	}
+	image := output.Or(vm.ImageSlug)
+	if vm.Encrypted {
+		image += out.Dim(" (encrypted)")
+	}
 	d := output.Detail{
 		Title:    vm.Name,
 		State:    state,
 		Subtitle: vm.ID,
 		Sections: [][]output.Pair{
-			{{"Plan", size}, {"Image", output.Or(vm.ImageSlug)}, {"Location", location}},
+			{{"Plan", size}, {"Image", image}, {"Location", location}},
 			network,
 			{{"Created", output.When(vm.CreatedAt)}},
 		},
@@ -211,7 +215,7 @@ func memory(mb int) string {
 func newVMCreateCmd(a *app) *cobra.Command {
 	var name, plan, image, sshKey, region, subnet, securityGroup string
 	var tags map[string]string
-	var noWait bool
+	var noWait, encrypted bool
 	cmd := &cobra.Command{
 		Use:   "create",
 		Short: "Create a VM",
@@ -220,13 +224,25 @@ organization's default card, then the VM is provisioned; this waits until it is
 ready unless you pass --no-wait.
 
 Find plans with "pantech plans", images with "pantech images" and your keys with
-"pantech ssh-keys list".`,
-		Example: `  pantech vm create --name web-1 --plan starter --image ubuntu-24-04 --ssh-key deploy`,
-		Args:    cobra.NoArgs,
+"pantech ssh-keys list".
+
+--encrypted picks the encrypted variant of --image: the VM's disk, its snapshots
+and backups are encrypted at rest, each VM with its own key. Encrypted VMs are
+enabled per organization on request.`,
+		Example: `  pantech vm create --name web-1 --plan starter --image ubuntu-24-04 --ssh-key deploy
+  pantech vm create --name vault-1 --plan starter --image ubuntu-24-04 --encrypted --ssh-key deploy`,
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			c, err := a.client()
 			if err != nil {
 				return err
+			}
+			if encrypted {
+				slug, err := encryptedVariant(cmd, c, image)
+				if err != nil {
+					return err
+				}
+				image = slug
 			}
 			body := map[string]any{"name": name, "plan_slug": plan, "image_slug": image}
 			if sshKey != "" {
@@ -347,11 +363,29 @@ Find plans with "pantech plans", images with "pantech images" and your keys with
 	f.StringVar(&subnet, "subnet", "", "VPC subnet, by id or name, for a VM without its own public IPv4")
 	f.StringVar(&securityGroup, "security-group", "", "security group, by id or name, for a standard VM (default: your default group)")
 	f.StringToStringVar(&tags, "tags", nil, "tags as key=value pairs, e.g. --tags env=prod,team=web")
+	f.BoolVar(&encrypted, "encrypted", false, "use the encrypted variant of --image (disk encrypted at rest)")
 	f.BoolVar(&noWait, "no-wait", false, "return once ordered, without waiting for it to provision")
 	_ = cmd.MarkFlagRequired("name")
 	_ = cmd.MarkFlagRequired("plan")
 	_ = cmd.MarkFlagRequired("image")
 	return cmd
+}
+
+// encryptedVariant is the slug of the encrypted image paired with slug, or
+// slug itself when it is already an encrypted image. Encrypted images are
+// listed only for organizations they are enabled for, so "none" also covers
+// "not enabled for you".
+func encryptedVariant(cmd *cobra.Command, c *api.Client, slug string) (string, error) {
+	images, err := api.ListAll[api.Image](ctx(cmd), c, "/images", nil)
+	if err != nil {
+		return "", err
+	}
+	for _, img := range images {
+		if img.Encrypted && (img.Slug == slug || (img.EncryptedVariantOf != nil && *img.EncryptedVariantOf == slug)) {
+			return img.Slug, nil
+		}
+	}
+	return "", fmt.Errorf("no encrypted variant of %s is available to your organization: encrypted VMs are enabled per organization on request, and only some images have one (see pantech images)", slug)
 }
 
 // planPrice is the plan's monthly estimate where it is placed (standard,

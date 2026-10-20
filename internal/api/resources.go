@@ -130,6 +130,8 @@ type LoadBalancerMember struct {
 type LoadBalancer struct {
 	ID              string               `json:"id"`
 	Name            string               `json:"name"`
+	ZoneID          string               `json:"zone_id"`
+	Kind            string               `json:"kind"`
 	PublicIPID      string               `json:"public_ip_id"`
 	PublicIPAddress *string              `json:"public_ip_address"`
 	NetworkID       *string              `json:"network_id"`
@@ -195,7 +197,42 @@ type KubernetesCluster struct {
 	APIAllowedCIDRs   []string              `json:"api_allowed_cidrs"`
 	Endpoint          *string               `json:"endpoint"`
 	VolumeStorageGB   int                   `json:"volume_storage_gb"`
+	Kind              string                `json:"kind"`
+	CNIPlugin         string                `json:"cni_plugin"`
+	PodCIDR           string                `json:"pod_cidr"`
+	ServiceCIDR       string                `json:"service_cidr"`
+	EndpointAccess    string                `json:"endpoint_access"`
 	CreatedAt         *string               `json:"created_at"`
+}
+
+type KubernetesNodePoolTaint struct {
+	Key    string `json:"key"`
+	Value  string `json:"value"`
+	Effect string `json:"effect"`
+}
+
+type KubernetesNodePool struct {
+	ID                 string                    `json:"id"`
+	ClusterID          string                    `json:"cluster_id"`
+	Name               string                    `json:"name"`
+	NodePlanID         string                    `json:"node_plan_id"`
+	Workers            int                       `json:"workers"`
+	AutoscalingEnabled bool                      `json:"autoscaling_enabled"`
+	MinWorkers         int                       `json:"min_workers"`
+	MaxWorkers         int                       `json:"max_workers"`
+	Labels             map[string]string         `json:"labels"`
+	Taints             []KubernetesNodePoolTaint `json:"taints"`
+	Status             string                    `json:"status"`
+	ObservedWorkers    int                       `json:"observed_workers"`
+	CreatedAt          *string                   `json:"created_at"`
+}
+
+type KubernetesAddon struct {
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+	Version string `json:"version"`
+	Status  string `json:"status"`
+	Enabled bool   `json:"enabled"`
 }
 
 type DatabaseEngine struct {

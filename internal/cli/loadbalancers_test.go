@@ -54,7 +54,7 @@ func TestLoadBalancersCreate(t *testing.T) {
 	if r.err != nil || r.stdout != "lb_1\n" {
 		t.Fatalf("stdout %q err %v", r.stdout, r.err)
 	}
-	want := map[string]any{"name": "web", "public_ip_id": "pip_9", "subnet_id": "snet_1", "public_port": float64(443), "private_port": float64(8443),
+	want := map[string]any{"name": "web", "kind": "vpc_native", "public_ip_id": "pip_9", "subnet_id": "snet_1", "public_port": float64(443), "private_port": float64(8443),
 		"algorithm": "leastconn", "cidr_list": []any{"203.0.113.0/24", "198.51.100.7/32"}, "instance_ids": []any{"vm_1", "vm_2"}}
 	if got := f.sentJSON("POST", "/load-balancers"); !reflect.DeepEqual(got, want) {
 		t.Fatalf("body = %v\nwant   %v", got, want)
@@ -68,7 +68,7 @@ func TestLoadBalancersCreateMinimalAndChecked(t *testing.T) {
 	if r.err != nil {
 		t.Fatal(r.err)
 	}
-	want := map[string]any{"name": "web", "public_ip_id": "pip_9", "subnet_id": "snet_1", "public_port": float64(80)}
+	want := map[string]any{"name": "web", "kind": "vpc_native", "public_ip_id": "pip_9", "subnet_id": "snet_1", "public_port": float64(80)}
 	if got := f.sentJSON("POST", "/load-balancers"); !reflect.DeepEqual(got, want) {
 		t.Fatalf("body = %v", got)
 	}
@@ -80,6 +80,38 @@ func TestLoadBalancersCreateMinimalAndChecked(t *testing.T) {
 	}
 	if n := len(f.sent("POST", "/load-balancers")); n != 1 {
 		t.Fatalf("%d creates, want only the valid one", n)
+	}
+}
+
+func TestLoadBalancersCreateAppliance(t *testing.T) {
+	f, srv := newFakeAPI(t)
+	f.on("GET /instances", 200, `{"data":[{"id":"vm_1","name":"web-1"}],"next_cursor":null}`).
+		on("POST /load-balancers", 202, `{"operation_id":"op_1","resource_id":"lb_1","status":"submitting"}`)
+	args := []string{"lb", "create", "--name", "web", "--zone", "af-abj-1", "--port", "80", "--target", "web-1", "--no-wait"}
+	if r := run(t, srv, "", args...); r.err == nil || !strings.Contains(r.err.Error(), "--yes") {
+		t.Fatalf("err = %v, want a confirmation: an appliance is billed", r.err)
+	}
+	if r := run(t, srv, "", append(args, "--yes")...); r.err != nil {
+		t.Fatal(r.err)
+	}
+	want := map[string]any{"name": "web", "kind": "appliance", "zone_id": "af-abj-1", "public_port": float64(80), "instance_ids": []any{"vm_1"}}
+	if got := f.sentJSON("POST", "/load-balancers"); !reflect.DeepEqual(got, want) {
+		t.Fatalf("body = %v\nwant   %v", got, want)
+	}
+}
+
+func TestLoadBalancersCreateKindChecks(t *testing.T) {
+	_, srv := newFakeAPI(t)
+	for _, args := range [][]string{
+		{"--port", "80"},                         // neither placement
+		{"--port", "80", "--public-ip", "pip_9"}, // vpc_native without a subnet
+		{"--port", "80", "--kind", "appliance"},  // appliance without a zone
+		{"--port", "80", "--kind", "appliance", "--zone", "af-abj-1", "--subnet", "snet_1"},
+		{"--port", "80", "--kind", "nlb", "--zone", "af-abj-1"},
+	} {
+		if r := run(t, srv, "", append([]string{"lb", "create", "--name", "web", "--yes"}, args...)...); !IsUsage(r.err) {
+			t.Fatalf("%v: err = %v, want a usage error", args, r.err)
+		}
 	}
 }
 

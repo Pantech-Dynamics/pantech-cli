@@ -64,6 +64,14 @@ func resolveKubernetesVersion(cmd *cobra.Command, c *api.Client, zone, ref strin
 	return "", fmt.Errorf("version %s is not offered in %s: use one of %s\nSee: pantech kubernetes versions --zone %s", ref, zone, strings.Join(offered, ", "), zone)
 }
 
+func checkCNI(cni string) error {
+	switch cni {
+	case "", "flannel", "wireguard", "calico":
+		return nil
+	}
+	return fmt.Errorf("--cni %q: use flannel, wireguard or calico", cni)
+}
+
 // parseAutoscale reads MIN:MAX.
 func parseAutoscale(s string) (api.KubernetesAutoscaling, error) {
 	los, his, ok := strings.Cut(s, ":")
@@ -92,6 +100,17 @@ cluster is running.`,
 		newKubernetesCreateCmd(a),
 		newKubernetesConfigureCmd(a),
 		newKubernetesUpgradeCmd(a),
+		newKubernetesResizeCmd(a),
+		newKubernetesNetworkCmd(a),
+		newKubernetesEndpointAccessCmd(a),
+		newKubernetesNodesCmd(a),
+		newKubernetesWorkloadsCmd(a),
+		newKubernetesApplyCmd(a),
+		newKubernetesManifestsCmd(a),
+		newKubernetesExposeCmd(a),
+		newKubernetesSyncRoutingCmd(a),
+		newKubernetesNodePoolsCmd(a),
+		newKubernetesAddonsCmd(a),
 		newKubernetesPowerCmd(a, "start", "Start a stopped cluster", "Start %s? Its nodes are billed for compute again.", verb{"Starting", "Started"}),
 		newKubernetesPowerCmd(a, "stop", "Stop a running cluster", "Stop %s? Its workloads stop; its disks stay billed.", verb{"Stopping", "Stopped"}),
 		deleteCmd(a, clusterKind, "Every node, its disks and the workloads' volumes are erased and cannot be recovered.", resolveCluster),
@@ -229,7 +248,8 @@ func newKubernetesGetCmd(a *app) *cobra.Command {
 				State:    clusterState(a, k),
 				Subtitle: k.ID,
 				Sections: [][]output.Pair{
-					{{"Version", k.KubernetesVersion}, {"Upgrades", upgradeTo}, {"Endpoint", output.Or(k.Endpoint)}, {"API allowed from", allowed}},
+					{{"Version", k.KubernetesVersion}, {"Upgrades", upgradeTo}, {"Endpoint", output.Or(k.Endpoint)}, {"Endpoint access", output.Or(&k.EndpointAccess)}, {"API allowed from", allowed}},
+					{{"CNI", output.Or(&k.CNIPlugin)}, {"Pod CIDR", output.Or(&k.PodCIDR)}, {"Service CIDR", output.Or(&k.ServiceCIDR)}},
 					{{"Control nodes", strconv.Itoa(k.ControlNodes)}, {"Workers", clusterWorkers(k)}, {"Node", fmt.Sprintf("%s · %d vCPU · %d MB · %d GB", k.NodePlanID, k.Node.VCPU, k.Node.MemoryMB, k.Node.DiskGB)}, {"Nodes billed", strconv.Itoa(k.Nodes)}, {"Volume storage", fmt.Sprintf("%d GB", k.VolumeStorageGB)}},
 					{{"Zone", k.ZoneID}, {"Network", output.Or(k.NetworkID)}, {"Subnet", output.Or(k.SubnetID)}},
 					{{"Created", output.When(k.CreatedAt)}},
@@ -248,7 +268,7 @@ func newKubernetesGetCmd(a *app) *cobra.Command {
 }
 
 func newKubernetesCreateCmd(a *app) *cobra.Command {
-	var name, zone, version, subnet, nodePlan, autoscale string
+	var name, zone, version, subnet, nodePlan, autoscale, cni, podCIDR, serviceCIDR string
 	var controlNodes, workers int
 	var apiAllow []string
 	var noWait bool
@@ -262,6 +282,11 @@ available control plane (see "pantech kubernetes versions"). Give a fixed
 --workers count, or --autoscale MIN:MAX to let the cluster autoscaler add and
 remove workers. --api-allow limits which addresses reach the API server (VPC
 zone only; default: any address).
+
+--cni picks the pod network: flannel (the default), wireguard (flannel
+with encrypted traffic between nodes) or calico (network policies).
+--pod-cidr and --service-cidr default to 10.42.0.0/16 and 10.43.0.0/16;
+change them only when they overlap a network your pods must reach.
 
 --version is a version such as 1.31.2, or its id, offered in --zone.`,
 		Example: `  pantech kubernetes create --name prod --zone af-abj-2 --version 1.31.2 \
@@ -301,6 +326,14 @@ zone only; default: any address).
 			if len(apiAllow) > 0 {
 				body["api_allowed_cidrs"] = apiAllow
 			}
+			if err := checkCNI(cni); err != nil {
+				return &usageError{err, cmd}
+			}
+			for k, v := range map[string]string{"cni_plugin": cni, "pod_cidr": podCIDR, "service_cidr": serviceCIDR} {
+				if v != "" {
+					body[k] = v
+				}
+			}
 			c, err := a.client()
 			if err != nil {
 				return err
@@ -326,6 +359,9 @@ zone only; default: any address).
 	f.IntVar(&workers, "workers", 0, "a fixed number of workers, 1 to 10")
 	f.StringVar(&autoscale, "autoscale", "", "let the autoscaler keep MIN:MAX workers, e.g. 2:5")
 	f.StringSliceVar(&apiAllow, "api-allow", nil, "a CIDR allowed to reach the API server; repeat or comma-separate (VPC zone only)")
+	f.StringVar(&cni, "cni", "", "the pod network: flannel (default), wireguard or calico")
+	f.StringVar(&podCIDR, "pod-cidr", "", "the pods' address range (default 10.42.0.0/16)")
+	f.StringVar(&serviceCIDR, "service-cidr", "", "the services' address range (default 10.43.0.0/16)")
 	f.BoolVar(&noWait, "no-wait", false, "return the id without waiting")
 	for _, req := range []string{"name", "zone", "version", "node-plan"} {
 		_ = cmd.MarkFlagRequired(req)

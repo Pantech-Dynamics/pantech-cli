@@ -7,7 +7,31 @@ Every pull request that changes what the CLI does adds a line under
 **Unreleased**. Releasing turns that heading into the version and its date; the
 release workflow refuses a tag that has no section here.
 
-## Unreleased
+## v0.4.0 — 2026-10-20
+
+### Added
+
+- Load balancers in standard zones: `pantech load-balancers create --zone
+  af-abj-1 --port 80 --target web-1` makes an appliance load balancer (a VM
+  with its own public address, billed as that VM). `--kind vpc_native|appliance`
+  picks the kind explicitly; it is otherwise worked out from `--subnet` /
+  `--zone`. `list` and `get` show the kind and zone.
+- `pantech kubernetes create --cni flannel|wireguard|calico --pod-cidr …
+  --service-cidr …` chooses the cluster's pod network; `get` shows it and the
+  endpoint access.
+- `pantech kubernetes resize <cluster> --node-plan …` moves every node to
+  another plan; `network` changes the CNI or address ranges;
+  `endpoint-access <cluster> public|private|dual` sets where the API server
+  is reachable.
+- Live cluster commands: `nodes`, `workloads` (services and pods; `-A` for
+  system namespaces), `apply <cluster> -f app.yaml` (server-side apply, `-f -`
+  for stdin), `manifests` (export your objects as YAML), `expose <cluster>
+  <service> --port 80` (route a public port to a service) and `sync-routing`.
+- `pantech kubernetes node-pools` (list, create, scale, delete): groups of
+  workers with their own plan, labels and taints; `list` shows how many have
+  joined. `node-pools scale` keeps whatever it is not asked to change.
+- `pantech kubernetes addons` (list, enable, disable): metrics-server,
+  csi-driver (node-local volumes) and ingress-controller, with their status.
 
 ## v0.3.0 — 2026-10-11
 

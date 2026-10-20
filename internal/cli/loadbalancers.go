@@ -33,6 +33,14 @@ func resolveVMs(cmd *cobra.Command, c *api.Client, refs []string) ([]string, err
 	return ids, nil
 }
 
+func checkLBKind(kind string) error {
+	switch kind {
+	case "", "vpc_native", "appliance":
+		return nil
+	}
+	return fmt.Errorf("--kind %q: use vpc_native or appliance", kind)
+}
+
 func checkAlgorithm(algorithm string) error {
 	switch algorithm {
 	case "", "roundrobin", "leastconn", "source":
@@ -45,11 +53,20 @@ func newLoadBalancersCmd(a *app) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "load-balancers",
 		Aliases: []string{"load-balancer", "lb"},
-		Short:   "Spread a TCP port of a public IP across VPC VMs",
-		Long: `Spread one TCP port of a load_balancer public IP across VMs in one subnet
-of that address's VPC network. One public IP can carry several load
-balancers, one per public port. Reserve the address first with
-"pantech public-ips create --network <network> --purpose load_balancer".`,
+		Short:   "Spread a TCP port across several VMs",
+		Long: `Spread one TCP port across several VMs. There are two kinds:
+
+  vpc_native  In a VPC zone: one port of a load_balancer public IP, spread
+              across VMs in one subnet of that address's network. One public
+              IP can carry several load balancers, one per public port.
+              Reserve the address first with "pantech public-ips create
+              --network <network> --purpose load_balancer". No extra fee.
+  appliance   In a standard zone: a managed load balancer VM with its own
+              public address, spread across your VMs in that zone. It is
+              billed as the VM it runs on.
+
+"pantech load-balancers create" picks the kind from the flags: --subnet means
+vpc_native, --zone without --subnet means appliance.`,
 	}
 	cmd.AddCommand(
 		newLoadBalancersListCmd(a),
@@ -69,6 +86,15 @@ func lbState(a *app, l api.LoadBalancer) string {
 		s += a.out.Dim(" (applying)")
 	}
 	return s
+}
+
+// lbKind is the load balancer's kind; one created before kinds existed is
+// vpc_native.
+func lbKind(l api.LoadBalancer) string {
+	if l.Kind == "" {
+		return "vpc_native"
+	}
+	return l.Kind
 }
 
 func lbListen(l api.LoadBalancer) string {
@@ -111,9 +137,9 @@ func newLoadBalancersListCmd(a *app) *cobra.Command {
 			}
 			rows := make([][]string, len(lbs))
 			for i, l := range lbs {
-				rows[i] = []string{l.Name, lbState(a, l), lbListen(l), l.Algorithm, strconv.Itoa(len(l.Members)), a.out.Dim(l.ID)}
+				rows[i] = []string{l.Name, lbState(a, l), lbListen(l), l.Algorithm, strconv.Itoa(len(l.Members)), lbKind(l), a.out.Dim(l.ID)}
 			}
-			a.out.Table([]string{"name", "state", "listens", "algorithm", "targets", "id"}, rows)
+			a.out.Table([]string{"name", "state", "listens", "algorithm", "targets", "kind", "id"}, rows)
 			a.out.Summary(count(len(lbs), "load balancer"))
 			return nil
 		},
@@ -163,7 +189,7 @@ func newLoadBalancersGetCmd(a *app) *cobra.Command {
 				Subtitle: l.ID,
 				Sections: [][]output.Pair{
 					{{"Listens", lbListen(l)}, {"Protocol", l.Protocol}, {"Algorithm", l.Algorithm}, {"Allowed from", allowed}},
-					{{"Public IP", l.PublicIPID}, {"Subnet", l.SubnetID}, {"Network", output.Or(l.NetworkID)}},
+					{{"Kind", lbKind(l)}, {"Zone", output.Or(&l.ZoneID)}, {"Public IP", output.Or(&l.PublicIPID)}, {"Subnet", output.Or(&l.SubnetID)}, {"Network", output.Or(l.NetworkID)}},
 					targets,
 					{{"Created", output.When(l.CreatedAt)}},
 				},
@@ -174,35 +200,70 @@ func newLoadBalancersGetCmd(a *app) *cobra.Command {
 }
 
 func newLoadBalancersCreateCmd(a *app) *cobra.Command {
-	var name, publicIP, subnet, algorithm string
+	var name, zone, lbKindFlag, publicIP, subnet, algorithm string
 	var port, privatePort int
 	var allow, targets []string
 	var noWait bool
 	cmd := &cobra.Command{
 		Use:   "create",
-		Short: "Create a load balancer on a load_balancer public IP",
-		Long: `Create a load balancer: one TCP port of a load_balancer public IP spread
-across VMs in one subnet of its VPC network. --private-port defaults to
---port and --algorithm to roundrobin; --allow limits which source addresses
-may connect (default: anywhere). Targets can be added later with
-"pantech load-balancers update --targets". The subnet's firewall rules must
-allow the port.`,
-		Example: `  pantech load-balancers create --name web --public-ip 102.211.122.91 --subnet snet_1 \
-    --port 443 --private-port 8443 --algorithm leastconn --target web-1,web-2`,
+		Short: "Create a load balancer",
+		Long: `Create a load balancer: one TCP port spread across several VMs.
+
+In a VPC zone (vpc_native) give --public-ip, an active load_balancer public
+IP, and --subnet, a subnet of its network that every target is in. The
+subnet's firewall rules must allow the port.
+
+In a standard zone (appliance) give --zone. A load balancer VM is created
+with its own public address and is billed as that VM; the targets are VMs
+in the zone, and their security groups must allow the port from it.
+
+--kind is worked out from the flags when it is left out. --private-port
+defaults to --port and --algorithm to roundrobin; --allow limits which
+source addresses may connect (default: anywhere). Targets can be added
+later with "pantech load-balancers update --targets".`,
+		Example: `  # VPC zone
+  pantech load-balancers create --name web --public-ip 102.211.122.91 --subnet snet_1 \
+    --port 443 --private-port 8443 --algorithm leastconn --target web-1,web-2
+  # standard zone
+  pantech load-balancers create --name web --zone af-abj-1 --port 80 --target web-1,web-2`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if err := checkAlgorithm(algorithm); err != nil {
 				return &usageError{err, cmd}
 			}
+			if err := checkLBKind(lbKindFlag); err != nil {
+				return &usageError{err, cmd}
+			}
+			kind := lbKindFlag
+			if kind == "" {
+				kind = "vpc_native"
+				if subnet == "" && publicIP == "" && zone != "" {
+					kind = "appliance"
+				}
+			}
+			switch {
+			case kind == "vpc_native" && (publicIP == "" || subnet == ""):
+				return &usageError{errors.New("a vpc_native load balancer needs --public-ip and --subnet (in a standard zone give --zone instead)"), cmd}
+			case kind == "appliance" && zone == "":
+				return &usageError{errors.New("an appliance load balancer needs --zone"), cmd}
+			case kind == "appliance" && (publicIP != "" || subnet != ""):
+				return &usageError{errors.New("an appliance load balancer has its own address: leave out --public-ip and --subnet"), cmd}
+			}
 			c, err := a.client()
 			if err != nil {
 				return err
 			}
-			pipID, err := resolvePublicIP(cmd, c, publicIP)
-			if err != nil {
-				return err
+			body := map[string]any{"name": name, "kind": kind, "public_port": port}
+			if zone != "" {
+				body["zone_id"] = zone
 			}
-			body := map[string]any{"name": name, "public_ip_id": pipID, "subnet_id": subnet, "public_port": port}
+			if kind == "vpc_native" {
+				pipID, err := resolvePublicIP(cmd, c, publicIP)
+				if err != nil {
+					return err
+				}
+				body["public_ip_id"], body["subnet_id"] = pipID, subnet
+			}
 			if algorithm != "" {
 				body["algorithm"] = algorithm
 			}
@@ -219,20 +280,27 @@ allow the port.`,
 				}
 				body["instance_ids"] = ids
 			}
+			if kind == "appliance" {
+				if err := a.confirm(fmt.Sprintf("Create load balancer %s? It runs on a VM in %s, billed as one.", name, zone)); err != nil {
+					return err
+				}
+			}
 			return a.runCreate(cmd, c, api.Request{Method: http.MethodPost, Path: "/load-balancers", Body: body}, noWait, "load balancer "+name)
 		},
 	}
 	f := cmd.Flags()
 	f.StringVar(&name, "name", "", "1 to 63 characters (required)")
-	f.StringVar(&publicIP, "public-ip", "", "an active load_balancer public IP, by id or address (required)")
-	f.StringVar(&subnet, "subnet", "", "a subnet of the public IP's network, by id; every target must be in it (required)")
+	f.StringVar(&lbKindFlag, "kind", "", "vpc_native (VPC zone) or appliance (standard zone); worked out from the flags when left out")
+	f.StringVar(&zone, "zone", "", "the zone; required for an appliance load balancer")
+	f.StringVar(&publicIP, "public-ip", "", "vpc_native: an active load_balancer public IP, by id or address")
+	f.StringVar(&subnet, "subnet", "", "vpc_native: a subnet of the public IP's network, by id; every target must be in it")
 	f.IntVar(&port, "port", 0, "the TCP port clients connect to, 1 to 65535 (required)")
 	f.IntVar(&privatePort, "private-port", 0, "the port on each target (default: --port)")
 	f.StringVar(&algorithm, "algorithm", "", "roundrobin (default), leastconn or source")
 	f.StringSliceVar(&allow, "allow", nil, "a source CIDR allowed to connect; repeat or comma-separate (default: anywhere)")
 	f.StringSliceVar(&targets, "target", nil, "a VM to send traffic to, by id or name; repeat or comma-separate")
 	f.BoolVar(&noWait, "no-wait", false, "return the id without waiting")
-	for _, req := range []string{"name", "public-ip", "subnet", "port"} {
+	for _, req := range []string{"name", "port"} {
 		_ = cmd.MarkFlagRequired(req)
 	}
 	return cmd
@@ -246,7 +314,8 @@ func newLoadBalancersUpdateCmd(a *app) *cobra.Command {
 		Use:   "update <load balancer>",
 		Short: "Rename a load balancer, change its algorithm or set its targets",
 		Long: `Rename a load balancer, change its algorithm, or replace its targets.
---targets is the whole new set (each in the load balancer's subnet);
+--targets is the whole new set (for vpc_native, each in the load balancer's
+subnet; for appliance, each in its zone);
 --no-targets removes them all. Flags left out stay as they are.`,
 		Example: `  pantech load-balancers update web --algorithm source
   pantech load-balancers update web --targets web-1,web-2,web-3`,

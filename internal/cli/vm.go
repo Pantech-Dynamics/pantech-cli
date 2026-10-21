@@ -34,6 +34,7 @@ func newVMCmd(a *app) *cobra.Command {
 		newVMPowerCmd(a, "reboot", "Reboot a VM", "Reboot %s? Anything running on it is interrupted.", verb{"Rebooting", "Rebooted"}),
 		newVMDeleteCmd(a),
 		newVMSSHCmd(a),
+		newVMChangeSSHKeyCmd(a),
 		newVMPrivateNetworkCmd(a),
 		newOrdersCmd(a, "/instance-orders", "VM"),
 	)

@@ -42,7 +42,7 @@ the production console and API.
 
 ```
 pantech auth login | logout | status
-pantech vm list | get | create | start | stop | reboot | delete | ssh    (alias: instances)
+pantech vm list | get | create | start | stop | reboot | delete | ssh | change-ssh-key    (alias: instances)
 pantech vm private-network attach | detach
 pantech vm orders list | get
 pantech db engines | list | get | create | start | stop | delete          (alias: database)
@@ -92,6 +92,11 @@ variant available to your organization. `pantech vm get` shows an encrypted
 VM's image as `ubuntu-24-04-encrypted (encrypted)`. See
 [Encrypted VMs](https://docs.pantechdynamics.com/compute/encrypted-vms) for how
 they boot and how to encrypt data volumes.
+
+`pantech vm change-ssh-key <vm> <key>` gives a running VM another of your SSH
+keys, for example after losing the private key. The VM restarts to take it
+(about two minutes); afterwards only the new key logs in, and keys added to
+`~/.ssh/authorized_keys` by hand keep working.
 
 `pantech vm ssh` opens port 22 to your address for 15 minutes through the API
 (SSH access is closed by default), then runs your own `ssh`; `--revoke` closes it

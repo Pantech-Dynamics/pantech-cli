@@ -7,6 +7,16 @@ Every pull request that changes what the CLI does adds a line under
 **Unreleased**. Releasing turns that heading into the version and its date; the
 release workflow refuses a tag that has no section here.
 
+## Unreleased
+
+### Added
+
+- `pantech vm change-ssh-key <vm> <key>` gives a running VM another of your
+  SSH keys, by id or name. It asks first (`--yes` to skip), restarts the VM to
+  take the key and follows the change; `--no-wait` prints the operation id
+  instead. Afterwards only the new key logs in; keys added on the server by
+  hand keep working.
+
 ## v0.4.0 — 2026-10-20
 
 ### Added

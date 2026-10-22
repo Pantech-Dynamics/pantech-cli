@@ -16,6 +16,17 @@ release workflow refuses a tag that has no section here.
   take the key and follows the change; `--no-wait` prints the operation id
   instead. Afterwards only the new key logs in; keys added on the server by
   hand keep working.
+- `pantech webhooks` sends your organization's events to an https URL:
+  `create --url … --event 'instance.*'` (repeatable; prints the signing secret
+  once, alone on stdout), `list`, `get`, `update` (`--url`, `--description`,
+  `--event`, `--enable` / `--disable`), `delete`, `test`, `rotate-secret`
+  (asks first; prints the new secret once) and `event-types`.
+  `webhooks deliveries list | get | redeliver` shows what was sent, page by
+  page (`--limit`, `--cursor`, `--all`), with the exact payload.
+
+### Changed
+
+- `pantech vm create` now requires `--ssh-key`. Images have no password login, and the platform refuses a VM without a key; before, the CLI only warned and the API answered `500`.
 
 ## v0.4.0 — 2026-10-20
 

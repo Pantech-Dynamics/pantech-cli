@@ -338,3 +338,54 @@ func Get(ctx context.Context, c *Client, path string, out any) ([]byte, error) {
 	}
 	return res.Body, nil
 }
+
+// Webhook is a URL Pantech sends the organization's events to. Its signing
+// secret is never part of it: see WebhookWithSecret.
+type Webhook struct {
+	ID             string   `json:"id"`
+	URL            string   `json:"url"`
+	Description    string   `json:"description"`
+	Events         []string `json:"events"`
+	Enabled        bool     `json:"enabled"`
+	DisabledReason *string  `json:"disabled_reason"`
+	FailingSince   *string  `json:"failing_since"`
+	CreatedAt      *string  `json:"created_at"`
+	UpdatedAt      *string  `json:"updated_at"`
+}
+
+// WebhookWithSecret is a create or a secret rotation: Secret (whsec_…) is
+// in that one response only, and null when a create is replayed.
+type WebhookWithSecret struct {
+	Webhook
+	Secret *string `json:"secret"`
+}
+
+// WebhookDelivery is one event sent, or waiting to be sent, to one webhook.
+type WebhookDelivery struct {
+	ID             string  `json:"id"`
+	WebhookID      string  `json:"webhook_id"`
+	EventID        string  `json:"event_id"`
+	EventType      string  `json:"event_type"`
+	Status         string  `json:"status"`
+	Attempts       int     `json:"attempts"`
+	NextAttemptAt  *string `json:"next_attempt_at"`
+	LastAttemptAt  *string `json:"last_attempt_at"`
+	LastStatusCode *int    `json:"last_status_code"`
+	LastError      *string `json:"last_error"`
+	LastResponse   *string `json:"last_response"`
+	LastDurationMS *int    `json:"last_duration_ms"`
+	DeliveredAt    *string `json:"delivered_at"`
+	CreatedAt      *string `json:"created_at"`
+}
+
+// WebhookDeliveryDetail is a delivery with the exact body sent.
+type WebhookDeliveryDetail struct {
+	WebhookDelivery
+	Payload json.RawMessage `json:"payload"`
+}
+
+type WebhookEventType struct {
+	Type        string `json:"type"`
+	Resource    string `json:"resource"`
+	Description string `json:"description"`
+}

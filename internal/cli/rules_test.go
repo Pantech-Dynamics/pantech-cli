@@ -155,7 +155,7 @@ func TestVMCreateTakesASubnetByName(t *testing.T) {
 		on("GET /networks/net_1/subnets", 200, `{"data":[{"id":"snet_1","name":"web"}],"next_cursor":null}`).
 		on("GET /plans", 200, plansBody).
 		on("POST /instances", 202, orderAccepted)
-	r := run(t, srv, "", "vm", "create", "--name", "web-1", "--plan", "starter", "--image", "ubuntu-24-04", "--subnet", "web", "--no-wait", "--yes")
+	r := run(t, srv, "", "vm", "create", "--ssh-key", "sshk_test1", "--name", "web-1", "--plan", "starter", "--image", "ubuntu-24-04", "--subnet", "web", "--no-wait", "--yes")
 	if r.err != nil {
 		t.Fatal(r.err)
 	}

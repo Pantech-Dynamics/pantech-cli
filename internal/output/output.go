@@ -111,9 +111,9 @@ func (p *Printer) State(s string) string {
 
 func stateLook(s string) (string, string) {
 	switch s {
-	case "running", "active", "succeeded", "provisioned", "available":
+	case "running", "active", "succeeded", "provisioned", "available", "enabled":
 		return "●", green
-	case "stopped", "deleted", "unavailable":
+	case "stopped", "deleted", "unavailable", "disabled", "canceled":
 		return "○", dim
 	case "failed", "payment_failed", "error":
 		return "✗", red

@@ -46,7 +46,7 @@ func TestVMCreateEncrypted(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			f, srv := newFakeAPI(t)
 			f.on("GET /images", 200, c.images).on("GET /plans", 200, plansBody).on("POST /instances", 202, orderAccepted)
-			r := run(t, srv, "", "vm", "create", "--name", "web-1", "--plan", "starter", "--image", c.image, "--encrypted", "--yes", "--no-wait")
+			r := run(t, srv, "", "vm", "create", "--ssh-key", "sshk_test1", "--name", "web-1", "--plan", "starter", "--image", c.image, "--encrypted", "--yes", "--no-wait")
 			if c.wantErr != "" {
 				if r.err == nil || !strings.Contains(r.err.Error(), c.wantErr) {
 					t.Fatalf("err = %v, want %q", r.err, c.wantErr)
@@ -69,7 +69,7 @@ func TestVMCreateEncrypted(t *testing.T) {
 func TestVMCreateEncryptedSlugDirectly(t *testing.T) {
 	f, srv := newFakeAPI(t)
 	f.on("GET /plans", 200, plansBody).on("POST /instances", 202, orderAccepted)
-	r := run(t, srv, "", "vm", "create", "--name", "web-1", "--plan", "starter", "--image", "ubuntu-24-04-encrypted", "--yes", "--no-wait")
+	r := run(t, srv, "", "vm", "create", "--ssh-key", "sshk_test1", "--name", "web-1", "--plan", "starter", "--image", "ubuntu-24-04-encrypted", "--yes", "--no-wait")
 	if r.err != nil {
 		t.Fatal(r.err)
 	}

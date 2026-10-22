@@ -2,7 +2,7 @@
 
 The Pantech Dynamics CLI: virtual machines, managed databases, managed
 Kubernetes, volumes, snapshots, networks, public IPs, load balancers, security
-groups, SSH keys and the catalogue from your terminal, through the [public API](https://docs.pantechdynamics.com/api).
+groups, SSH keys, webhooks and the catalogue from your terminal, through the [public API](https://docs.pantechdynamics.com/api).
 
 ```sh
 curl -fsSL https://pantechdynamics.com/install | bash
@@ -56,6 +56,8 @@ pantech load-balancers list | get | create | update | delete           (alias: l
 pantech kubernetes versions | list | get | create | configure | upgrade | start | stop | delete | kubeconfig   (alias: k8s)
 pantech security-groups list | get | create | delete | rules set | add | remove
 pantech ssh-keys list | add | delete
+pantech webhooks list | get | create | update | delete | test | rotate-secret | event-types
+pantech webhooks deliveries list | get | redeliver
 pantech plans | images | regions
 pantech operations get | wait
 pantech upgrade [version] [--check]                       (alias: update)
@@ -154,6 +156,17 @@ available. `pantech kubernetes kubeconfig <cluster> -o FILE` writes the admin
 kubeconfig readable only by you (mode 0600); `--stdout` prints it instead, and
 one of the two is required. It is a cluster-admin credential: keep it like a
 password.
+
+`pantech webhooks create --url https://… --event 'instance.*' [--event …]
+[--description …]` sends your organization's events to an https URL as signed
+JSON POSTs; `pantech webhooks event-types` lists what can be subscribed to
+(an exact type, `<resource>.*` or `*`). The signing secret (`whsec_…`) is
+printed once, alone on stdout, and never again; `rotate-secret` makes a new one
+the same way, and the old one keeps signing for 24 hours. `update` changes only
+the flags given (`--event` replaces the whole list; `--enable` / `--disable`).
+`test` queues a `webhook.test` event, `deliveries list` shows one page at a time
+(`--limit`, `--cursor`, or `--all`), `deliveries get` shows the exact payload
+sent, and `deliveries redeliver` sends one again with the same event id.
 
 Every API error is printed with the API's own message, each invalid field and
 what it must be (on a `422`), and the error code and request id to quote to

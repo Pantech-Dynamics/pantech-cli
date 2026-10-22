@@ -234,6 +234,11 @@ enabled per organization on request.`,
   pantech vm create --name vault-1 --plan starter --image ubuntu-24-04 --encrypted --ssh-key deploy`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			// Images have no password login, so the platform refuses a VM
+			// without a key; say so before anything is sent or paid.
+			if strings.TrimSpace(sshKey) == "" {
+				return &usageError{errors.New(`--ssh-key is required: images have no password login, so it is how you log in (see "pantech ssh-keys list")`), cmd}
+			}
 			c, err := a.client()
 			if err != nil {
 				return err
@@ -246,15 +251,11 @@ enabled per organization on request.`,
 				image = slug
 			}
 			body := map[string]any{"name": name, "plan_slug": plan, "image_slug": image}
-			if sshKey != "" {
-				id, err := resolveSSHKey(cmd, c, sshKey)
-				if err != nil {
-					return err
-				}
-				body["ssh_key_id"] = id
-			} else {
-				a.out.Warn("No --ssh-key: images have no password login, so you will not be able to SSH in.")
+			id, err := resolveSSHKey(cmd, c, sshKey)
+			if err != nil {
+				return err
 			}
+			body["ssh_key_id"] = id
 			if region != "" {
 				body["region"] = region
 			}
@@ -359,7 +360,7 @@ enabled per organization on request.`,
 	f.StringVar(&name, "name", "", "its name, also its hostname (required)")
 	f.StringVar(&plan, "plan", "", "plan slug, from pantech plans (required)")
 	f.StringVar(&image, "image", "", "image slug, from pantech images (required)")
-	f.StringVar(&sshKey, "ssh-key", "", "SSH key to install, by id or name")
+	f.StringVar(&sshKey, "ssh-key", "", "SSH key to install, by id or name (required)")
 	f.StringVar(&region, "region", "", "region code (default: the platform's region)")
 	f.StringVar(&subnet, "subnet", "", "VPC subnet, by id or name, for a VM without its own public IPv4")
 	f.StringVar(&securityGroup, "security-group", "", "security group, by id or name, for a standard VM (default: your default group)")

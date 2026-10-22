@@ -38,14 +38,14 @@ func TestVMCreate(t *testing.T) {
 			name:          "standard, with a security group by name and tags",
 			args:          []string{"--security-group", "web", "--tags", "env=prod,team=web"},
 			wantPlacement: "placement=standard",
-			wantBody:      map[string]any{"name": "web-1", "plan_slug": "starter", "image_slug": "ubuntu-24-04", "security_group_id": "sg_web", "tags": map[string]any{"env": "prod", "team": "web"}},
+			wantBody:      map[string]any{"name": "web-1", "plan_slug": "starter", "image_slug": "ubuntu-24-04", "ssh_key_id": "sshk_test1", "security_group_id": "sg_web", "tags": map[string]any{"env": "prod", "team": "web"}},
 			wantStdout:    []string{"order     ord_1", "instance  vm_1"},
 		},
 		{
 			name:          "in a VPC subnet: priced without a public IP",
 			args:          []string{"--subnet", "snet_1"},
 			wantPlacement: "placement=vpc",
-			wantBody:      map[string]any{"name": "web-1", "plan_slug": "starter", "image_slug": "ubuntu-24-04", "subnet_id": "snet_1"},
+			wantBody:      map[string]any{"name": "web-1", "plan_slug": "starter", "image_slug": "ubuntu-24-04", "ssh_key_id": "sshk_test1", "subnet_id": "snet_1"},
 			wantStdout:    []string{"order     ord_1", "instance  vm_1"},
 		},
 		{
@@ -59,7 +59,7 @@ func TestVMCreate(t *testing.T) {
 			f.on("GET /plans", 200, plansBody).
 				on("GET /security-groups", 200, `{"data":[{"id":"sg_web","name":"web"},{"id":"sg_webby","name":"webby"}],"next_cursor":null}`).
 				on("POST /instances", 202, orderAccepted)
-			args := append([]string{"vm", "create", "--name", "web-1", "--plan", "starter", "--image", "ubuntu-24-04", "--yes", "--no-wait"}, c.args...)
+			args := append([]string{"vm", "create", "--ssh-key", "sshk_test1", "--name", "web-1", "--plan", "starter", "--image", "ubuntu-24-04", "--yes", "--no-wait"}, c.args...)
 			r := run(t, srv, "", args...)
 			if c.wantErr != "" {
 				if r.err == nil || !strings.Contains(r.err.Error(), c.wantErr) {
@@ -88,10 +88,23 @@ func TestVMCreate(t *testing.T) {
 	}
 }
 
+// Images have no password login, so a VM without --ssh-key is a usage error
+// before anything is sent (the API refuses it too, with 422 ssh_key_id).
+func TestVMCreateRequiresAnSSHKey(t *testing.T) {
+	f, srv := newFakeAPI(t)
+	r := run(t, srv, "", "vm", "create", "--name", "web-1", "--plan", "starter", "--image", "ubuntu-24-04", "--yes", "--no-wait")
+	if r.err == nil || !strings.Contains(r.err.Error(), "--ssh-key is required") {
+		t.Fatalf("err = %v, want a usage error naming --ssh-key", r.err)
+	}
+	if len(f.sent("POST", "/instances")) != 0 || len(f.sent("GET", "/plans")) != 0 {
+		t.Fatal("called the API without a key")
+	}
+}
+
 func TestVMCreateNoWaitQuietPrintsTheInstanceID(t *testing.T) {
 	f, srv := newFakeAPI(t)
 	f.on("GET /plans", 200, plansBody).on("POST /instances", 202, orderAccepted)
-	r := run(t, srv, "", "vm", "create", "--name", "web-1", "--plan", "starter", "--image", "ubuntu-24-04", "--yes", "--no-wait", "-q")
+	r := run(t, srv, "", "vm", "create", "--ssh-key", "sshk_test1", "--name", "web-1", "--plan", "starter", "--image", "ubuntu-24-04", "--yes", "--no-wait", "-q")
 	if r.err != nil || r.stdout != "vm_1\n" {
 		t.Fatalf("stdout %q, err %v", r.stdout, r.err)
 	}
@@ -103,7 +116,7 @@ func TestVMCreateFailedOrderIsTyped(t *testing.T) {
 		on("POST /instances", 202, orderAccepted).
 		on("GET /instance-orders/ord_1", 200, `{"id":"ord_1","instance_id":"vm_1","status":"awaiting_payment"}`).
 		on("GET /instance-orders/ord_1", 200, `{"id":"ord_1","instance_id":"vm_1","status":"payment_failed","failure_code":"card_declined"}`)
-	r := run(t, srv, "", "vm", "create", "--name", "web-1", "--plan", "starter", "--image", "ubuntu-24-04", "--yes")
+	r := run(t, srv, "", "vm", "create", "--ssh-key", "sshk_test1", "--name", "web-1", "--plan", "starter", "--image", "ubuntu-24-04", "--yes")
 	var failed *api.OrderFailed
 	if !errors.As(r.err, &failed) || !strings.Contains(r.err.Error(), "card_declined") {
 		t.Fatalf("err = %v, want an *api.OrderFailed naming card_declined", r.err)

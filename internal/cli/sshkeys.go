@@ -104,7 +104,7 @@ again, so save it.`,
 			body["name"] = name
 
 			var key api.SSHKey
-			res, err := c.Do(ctx(cmd), api.Request{Method: http.MethodPost, Path: "/ssh-keys", Body: body}, &key)
+			res, err := c.Do(ctx(cmd), api.Request{Method: http.MethodPost, Path: "/ssh-keys", Body: body, NoRetry: true}, &key)
 			if err != nil {
 				if api.IsCode(err, "SSH_KEY_NAME_TAKEN") {
 					return fmt.Errorf("%w\nIf a request to add it failed before, it may already exist: pantech ssh-keys list", err)
@@ -147,7 +147,7 @@ func newSSHKeysDeleteCmd(a *app) *cobra.Command {
 			if err := a.confirm(fmt.Sprintf("Delete SSH key %s?", args[0])); err != nil {
 				return err
 			}
-			_, err = c.Do(ctx(cmd), api.Request{Method: http.MethodDelete, Path: "/ssh-keys/" + url.PathEscape(id)}, nil)
+			_, err = c.Do(ctx(cmd), api.Request{Method: http.MethodDelete, Path: "/ssh-keys/" + url.PathEscape(id), NoRetry: true}, nil)
 			// Not replayed on retry: a 404 after a retry means the first attempt worked.
 			if err != nil && !api.IsCode(err, "RESOURCE_NOT_FOUND") {
 				return err

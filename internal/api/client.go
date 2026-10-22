@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -80,14 +81,37 @@ func (p *Problem) Error() string {
 			fmt.Fprintf(&b, "\n  %s: %s", e.Field, text)
 		}
 	}
-	if p.Code != "" {
-		fmt.Fprintf(&b, "\n(%s", p.Code)
-		if p.RequestID != "" {
-			fmt.Fprintf(&b, ", request %s", p.RequestID)
-		}
-		b.WriteString(")")
+	switch {
+	case p.Code != "" && p.RequestID != "":
+		fmt.Fprintf(&b, "\n(%s, request %s)", p.Code, p.RequestID)
+	case p.Code != "":
+		fmt.Fprintf(&b, "\n(%s)", p.Code)
+	case p.RequestID != "":
+		fmt.Fprintf(&b, "\n(request %s)", p.RequestID)
 	}
 	return b.String()
+}
+
+// AsFlags names a problem's field errors the way the command spelled them:
+// the API's request field ("ssh_key_id") becomes the flag ("--ssh-key").
+// Fields with no flag in names are left as the API sent them. Any other
+// error is returned unchanged.
+func AsFlags(err error, names map[string]string) error {
+	var p *Problem
+	if !errors.As(err, &p) {
+		return err
+	}
+	if len(p.Errors) > 0 && p.Detail == p.fieldErrorsDetail() {
+		// The detail repeats the field errors under their API names; the
+		// renamed list below says the same, so lead with the title.
+		p.Detail = ""
+	}
+	for i, e := range p.Errors {
+		if flag, ok := names[e.Field]; ok {
+			p.Errors[i].Field = flag
+		}
+	}
+	return err
 }
 
 // fieldErrorsDetail is the detail the API builds from the field errors
@@ -116,6 +140,10 @@ type Request struct {
 	Path   string
 	Query  url.Values
 	Body   any // marshalled as JSON when not nil; a json.RawMessage is sent as is
+	// NoRetry sends the request once. For writes the API does not replay
+	// by Idempotency-Key (creating or deleting an SSH key): a retry after a
+	// lost answer would act twice, or lose a generated private key.
+	NoRetry bool
 }
 
 type Response struct {
@@ -150,6 +178,9 @@ func (c *Client) Do(ctx context.Context, req Request, out any) (*Response, error
 	for attempt := 0; ; attempt++ {
 		res, err := c.send(ctx, req.Method, target, payload, idempotencyKey)
 		wait, retry := c.retryAfter(attempt, res, err)
+		if req.NoRetry {
+			retry = false
+		}
 		if retry {
 			select {
 			case <-ctx.Done():
@@ -159,6 +190,12 @@ func (c *Client) Do(ctx context.Context, req Request, out any) (*Response, error
 			}
 		}
 		if err != nil {
+			var netErr *NetworkError
+			if errors.As(err, &netErr) && idempotencyKey != "" {
+				// A write whose answer never came may still have been
+				// applied: say so, rather than inviting a blind retry.
+				netErr.Write = true
+			}
 			return nil, err
 		}
 		if res.Status >= 400 {
@@ -230,10 +267,24 @@ func (c *Client) retryAfter(attempt int, res *Response, err error) (time.Duratio
 	return 0, false
 }
 
-type NetworkError struct{ Err error }
+type NetworkError struct {
+	Err error
+	// Write is set for a change (POST, PUT, PATCH, DELETE).
+	Write bool
+}
 
 func (e *NetworkError) Error() string {
-	return "could not reach the API: " + e.Err.Error()
+	var netErr net.Error
+	timedOut := errors.Is(e.Err, context.DeadlineExceeded) || (errors.As(e.Err, &netErr) && netErr.Timeout())
+	switch {
+	case timedOut && e.Write:
+		return "the API did not answer in time. The change may still have gone through: check with the matching list or get command before trying again"
+	case timedOut:
+		return "the API did not answer in time. Try again in a moment"
+	case e.Write:
+		return "the connection to the API failed. If it dropped after the request was sent, the change may have gone through: check with the matching list or get command before trying again"
+	}
+	return "could not reach the API. Check your internet connection and try again"
 }
 func (e *NetworkError) Unwrap() error { return e.Err }
 
@@ -244,8 +295,13 @@ func problemFrom(res *Response) error {
 	if err := json.Unmarshal(res.Body, p); err != nil || (p.Code == "" && p.Detail == "" && p.Title == "" && len(p.Errors) == 0) {
 		*p = Problem{}
 		p.Detail = strings.TrimSpace(string(res.Body))
-		if len(p.Detail) > 300 || p.Detail == "" {
+		// An HTML or oversized page (a proxy's error page) is never printed:
+		// its status says what happened.
+		if len(p.Detail) > 300 || p.Detail == "" || strings.HasPrefix(p.Detail, "<") {
 			p.Detail = http.StatusText(res.Status)
+			if res.Status >= 500 {
+				p.Detail = fmt.Sprintf("the API is temporarily unavailable (%d %s). Try again in a moment", res.Status, http.StatusText(res.Status))
+			}
 		}
 	}
 	p.Status = res.Status

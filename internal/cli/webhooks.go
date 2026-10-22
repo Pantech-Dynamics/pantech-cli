@@ -203,7 +203,7 @@ field. At most 10 webhooks per organization; owners and admins only.`,
 			var w api.WebhookWithSecret
 			res, err := c.Do(ctx(cmd), api.Request{Method: http.MethodPost, Path: "/webhooks", Body: body}, &w)
 			if err != nil {
-				return err
+				return api.AsFlags(err, map[string]string{"url": "--url", "events": "--event", "description": "--description"})
 			}
 			if a.out.JSON {
 				a.out.RawJSON(res.Body)

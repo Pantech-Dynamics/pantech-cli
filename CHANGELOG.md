@@ -7,6 +7,13 @@ Every pull request that changes what the CLI does adds a line under
 **Unreleased**. Releasing turns that heading into the version and its date; the
 release workflow refuses a tag that has no section here.
 
+## v0.5.1 — 2026-10-22
+
+### Fixed
+
+- Clearer errors: a gateway's HTML error page is never printed; a write that times out or loses its connection says the change may have gone through and to check before retrying; field errors name the flag you used (`--ssh-key`, not `ssh_key_id`) on `vm create` and `webhooks create`; and the request id is always shown.
+- `pantech ssh-keys add` and `delete` are no longer retried automatically, since the API does not replay them: a retry could lose a generated private key.
+
 ## v0.5.0 — 2026-10-22
 
 ### Added

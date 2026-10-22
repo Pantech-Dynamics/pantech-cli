@@ -186,3 +186,60 @@ func TestProblemFieldErrorsDetailNotRepeated(t *testing.T) {
 		t.Fatalf("Error() = %q, want %q", err, want)
 	}
 }
+
+// A proxy's HTML error page is never printed; the status says what happened.
+func TestHTMLErrorPageIsNotPrinted(t *testing.T) {
+	c, _ := server(t, []int{502}, `<html><head><title>502 Bad Gateway</title></head><body><center><h1>502 Bad Gateway</h1></center></body></html>`)
+	c.Retries = 0
+	_, err := c.Do(context.Background(), Request{Method: http.MethodGet, Path: "/me"}, nil)
+	if err == nil || strings.Contains(err.Error(), "<") || !strings.Contains(err.Error(), "temporarily unavailable") {
+		t.Fatalf("err = %q", err)
+	}
+}
+
+// NoRetry sends a write once, even when the API answers 500.
+func TestNoRetrySendsOnce(t *testing.T) {
+	c, keys := server(t, []int{500}, `{"status":500,"code":"INTERNAL","detail":"Oops."}`)
+	_, err := c.Do(context.Background(), Request{Method: http.MethodPost, Path: "/ssh-keys", NoRetry: true}, nil)
+	if !IsCode(err, "INTERNAL") || len(*keys) != 1 {
+		t.Fatalf("err %v after %d attempts, want 1", err, len(*keys))
+	}
+}
+
+// A write that times out may have been applied, and says so.
+func TestWriteTimeoutSaysTheChangeMayHaveHappened(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(200 * time.Millisecond)
+	}))
+	t.Cleanup(srv.Close)
+	c := New(srv.URL, "PAN_test", "test")
+	c.HTTP.Timeout = 50 * time.Millisecond
+	c.Retries = 0
+	_, err := c.Do(context.Background(), Request{Method: http.MethodPost, Path: "/instances"}, nil)
+	if err == nil || !strings.Contains(err.Error(), "may still have gone through") {
+		t.Fatalf("write timeout = %q", err)
+	}
+	_, err = c.Do(context.Background(), Request{Method: http.MethodGet, Path: "/me"}, nil)
+	if err == nil || strings.Contains(err.Error(), "gone through") || !strings.Contains(err.Error(), "did not answer in time") {
+		t.Fatalf("read timeout = %q", err)
+	}
+}
+
+// The request id is shown even when the problem has no code, and field
+// errors name the command's flags.
+func TestRequestIDWithoutCodeAndFlagNames(t *testing.T) {
+	p := &Problem{Status: 500, Detail: "Something failed.", RequestID: "req_9"}
+	if !strings.Contains(p.Error(), "(request req_9)") {
+		t.Fatalf("Error() = %q", p.Error())
+	}
+	field := &Problem{Status: 422, Code: "VALIDATION_FAILED", Title: "Validation failed", Detail: "ssh_key_id: is required."}
+	field.Errors = append(field.Errors, struct {
+		Field   string `json:"field"`
+		Code    string `json:"code"`
+		Message string `json:"message"`
+	}{"ssh_key_id", "REQUIRED", "is required"})
+	err := AsFlags(field, map[string]string{"ssh_key_id": "--ssh-key"})
+	if !strings.Contains(err.Error(), "--ssh-key: is required") || strings.Contains(err.Error(), "ssh_key_id") {
+		t.Fatalf("Error() = %q", err.Error())
+	}
+}

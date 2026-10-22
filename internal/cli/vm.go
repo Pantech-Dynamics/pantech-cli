@@ -299,7 +299,11 @@ enabled per organization on request.`,
 			}
 			res, err := c.Do(ctx(cmd), api.Request{Method: http.MethodPost, Path: "/instances", Body: body}, &accepted)
 			if err != nil {
-				return err
+				return api.AsFlags(err, map[string]string{
+					"name": "--name", "plan_slug": "--plan", "image_slug": "--image", "ssh_key_id": "--ssh-key",
+					"region": "--region", "subnet_id": "--subnet", "network_id": "--subnet",
+					"security_group_id": "--security-group", "tags": "--tags",
+				})
 			}
 			if noWait {
 				switch {

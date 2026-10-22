@@ -7,7 +7,7 @@ Every pull request that changes what the CLI does adds a line under
 **Unreleased**. Releasing turns that heading into the version and its date; the
 release workflow refuses a tag that has no section here.
 
-## Unreleased
+## v0.5.0 — 2026-10-22
 
 ### Added
 

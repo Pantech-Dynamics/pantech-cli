@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
@@ -173,15 +174,23 @@ func whoAmI(c context.Context, baseURL, key string) (*api.Me, error) {
 }
 
 func newLogoutCmd(a *app) *cobra.Command {
-	return &cobra.Command{
+	var keepKey bool
+	cmd := &cobra.Command{
 		Use:   "logout",
-		Short: "Forget this profile's key on this machine",
-		Long: `Forget this profile's key on this machine. The key itself stays valid until it
-expires: revoke it in the console under Organization › API keys to end it now.`,
+		Short: "Sign out: forget this profile's key and revoke it",
+		Long: `Sign out: forget this profile's key on this machine, then revoke the key so it
+stops working everywhere. --keep-key only forgets it, leaving the key valid
+until it expires or is revoked in the console under Organization › API keys.
+
+PANTECH_API_KEY is never revoked: unset it yourself.`,
+		Example: `  pantech auth logout
+  pantech --profile acme auth logout --keep-key`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			name := a.profileName()
 			profile, known := a.cfg.Profiles[name]
+			// Read before it is forgotten, to revoke it afterwards.
+			key, _ := config.LoadKey(name)
 			if err := config.DeleteKey(name); err != nil {
 				return err
 			}
@@ -192,17 +201,73 @@ expires: revoke it in the console under Organization › API keys to end it now.
 			if err := a.cfg.Save(); err != nil {
 				return err
 			}
-			if !known {
+			if !known && key == "" {
 				a.out.Note("Profile %q was not signed in.", name)
 				return nil
 			}
 			a.out.Success("Signed out of profile %q.", name)
+
+			keyName := "Its key"
 			if profile.KeyID != "" {
-				a.out.Note("Its key (%s) still works until it expires. Revoke it under Organization › API keys to end it now.", profile.KeyID)
+				keyName = fmt.Sprintf("Its key (%s)", profile.KeyID)
+			}
+			stillWorks := func() {
+				a.out.Note("%s still works until it expires. Revoke it under Organization › API keys to end it now.", keyName)
+			}
+			// A key from another API (v0.1.2 or older on staging) works
+			// only there: never send it to this one.
+			otherAPI := profile.APIURL != "" && profile.APIURL != api.DefaultBaseURL
+			switch {
+			case key == "":
+				return nil
+			case keepKey || otherAPI:
+				stillWorks()
+				return nil
+			}
+			switch result, err := a.revokeKey(ctx(cmd), key); {
+			case err != nil:
+				a.out.Warn("Could not revoke the key: %v", err)
+				stillWorks()
+			case result == keyRevoked:
+				a.out.Note("%s is revoked.", keyName)
+			case result == keyUnrevoked:
+				// An API from before DELETE /me: the key is untouched.
+				stillWorks()
 			}
 			return nil
 		},
 	}
+	cmd.Flags().BoolVar(&keepKey, "keep-key", false, "only forget the key here; do not revoke it")
+	return cmd
+}
+
+type revokeResult int
+
+const (
+	keyRevoked   revokeResult = iota
+	keyGone                   // 401: expired or revoked already
+	keyUnrevoked              // 404, 405: an API without DELETE /me
+)
+
+// revokeKey ends key with DELETE /me, once and briefly: signing out never
+// waits long on the API.
+func (a *app) revokeKey(c context.Context, key string) (revokeResult, error) {
+	client := api.New(a.baseURL(), key, userAgent())
+	client.Retries = 0
+	client.HTTP.Timeout = 5 * time.Second
+	c, cancel := context.WithTimeout(c, 5*time.Second)
+	defer cancel()
+	_, err := client.Do(c, api.Request{Method: http.MethodDelete, Path: "/me", NoRetry: true}, nil)
+	var p *api.Problem
+	switch {
+	case err == nil:
+		return keyRevoked, nil
+	case errors.As(err, &p) && p.Status == http.StatusUnauthorized:
+		return keyGone, nil
+	case errors.As(err, &p) && (p.Status == http.StatusNotFound || p.Status == http.StatusMethodNotAllowed):
+		return keyUnrevoked, nil
+	}
+	return keyUnrevoked, err
 }
 
 func newStatusCmd(a *app) *cobra.Command {

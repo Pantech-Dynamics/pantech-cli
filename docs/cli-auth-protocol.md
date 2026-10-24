@@ -169,4 +169,8 @@ nothing. If it works, it stores the key in the OS keychain (or a 0600 file) and 
 organization in its profile.
 
 The key appears under Organization › API keys like any other, so it can be
-revoked there; `pantech auth logout` only forgets it locally.
+revoked there. `pantech auth logout` forgets it locally and then revokes it with
+`DELETE https://api.pantechdynamics.com/public/v1/me`, the key ending itself: one
+attempt, a few seconds at most, never retried. A `401` (the key is already gone)
+is ignored, and a `404` or `405` (an API without that route) leaves the key
+valid, which the CLI says. `--keep-key` only forgets it.

@@ -14,6 +14,7 @@ cmd/pantech/        main: runs the command tree, maps errors to exit codes
 internal/api/       the public API: client (auth, Idempotency-Key, retries, problems), types, waiting
 internal/auth/      browser sign-in through the console (PKCE, loopback callback)
 internal/cli/       the cobra commands
+internal/mcpconfig/ AI apps' MCP config files: paths per OS, JSON and TOML merges
 internal/config/    profiles in ~/.config/pantech/config.json; keys in the keychain or credentials.json
 internal/output/    tables, colour, --json / --quiet
 install.sh          what https://pantechdynamics.com/install serves

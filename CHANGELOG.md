@@ -7,6 +7,24 @@ Every pull request that changes what the CLI does adds a line under
 **Unreleased**. Releasing turns that heading into the version and its date; the
 release workflow refuses a tag that has no section here.
 
+## v0.6.0 — 2026-10-24
+
+### Added
+
+- `pantech mcp install <client>` connects an AI app to Pantech through MCP:
+  `claude-code`, `claude`, `cursor`, `vscode`, `windsurf`, `codex` and `gemini`
+  get a `pantech` server in their own config (every other server kept, the old
+  file saved as `<file>.bak`), or are set up with their own `claude mcp add` /
+  `gemini mcp add`; `chatgpt`, `grok` and Claude's hosted connector get the
+  steps to follow. The hosted server is the default; `--local` runs
+  `pantech-mcp stdio`, `--print` only shows what would be added, and `--url`
+  points at another hosted server.
+- `pantech mcp status` shows the hosted server, whether `pantech-mcp` is
+  installed and which apps already have Pantech; `pantech mcp list-clients`
+  lists the apps. Client names complete in the shell.
+- `pantech auth logout` now also revokes the key, so it stops working
+  everywhere; `--keep-key` only forgets it on this machine.
+
 ## v0.5.1 — 2026-10-22
 
 ### Fixed

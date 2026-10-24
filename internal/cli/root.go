@@ -100,6 +100,7 @@ Sign in with "pantech auth login". In CI, set PANTECH_API_KEY instead.`,
 		newRegionsCmd(a),
 		newOperationsCmd(a),
 		newAPICmd(a),
+		newMCPCmd(a),
 		newUpgradeCmd(a),
 	)
 	markUsageErrors(root)

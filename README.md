@@ -38,6 +38,10 @@ Profiles keep more than one sign-in: `pantech --profile work auth login`, then
 `--profile work` (or `PANTECH_PROFILE=work`) on any command. Every profile uses
 the production console and API.
 
+`pantech auth logout` forgets the profile's key on this machine and revokes it,
+so it stops working everywhere. `--keep-key` only forgets it. A key in
+`PANTECH_API_KEY` is never touched.
+
 ## Commands
 
 ```
@@ -62,6 +66,7 @@ pantech plans | images | regions
 pantech operations get | wait
 pantech upgrade [version] [--check]                       (alias: update)
 pantech api <METHOD> <path> [--data JSON] [-f key=value]   anything else in the API
+pantech mcp install <client> [--local] [--print] | status | list-clients
 ```
 
 `pantech upgrade` replaces the CLI with the latest release, after checking the
@@ -174,6 +179,38 @@ support.
 
 The CLI sends an `Idempotency-Key` with every write and retries network errors,
 429s and 5xxs with the same key, so a retried change never happens twice.
+
+### MCP
+
+`pantech mcp install <client>` connects an AI app to Pantech through the Model
+Context Protocol, so it can list, create and manage your cloud for you. The
+clients are `claude-code`, `claude`, `cursor`, `vscode`, `windsurf`, `codex`,
+`gemini`, `chatgpt` and `grok` (`pantech mcp list-clients`).
+
+By default the app uses the hosted server, `https://mcp.pantechdynamics.com/mcp`:
+the first time, it opens your browser and you approve it in the console, choosing
+the organization, what it may do (read only, manage, or manage and delete) and
+for how long. Revoke it there any time. `--local` runs
+[`pantech-mcp`](https://pantechdynamics.com/mcp) on this machine instead
+(`pantech-mcp stdio`), with your signed-in profile or `PANTECH_API_KEY`.
+
+| Client | What `install` does |
+| --- | --- |
+| `claude-code` | `claude mcp add --scope user …`, or edits `~/.claude.json` |
+| `claude` | Prints the connector steps; `--local` edits Claude Desktop's `claude_desktop_config.json` |
+| `cursor` | Edits `~/.cursor/mcp.json` |
+| `vscode` | Edits your user `mcp.json` (`~/Library/Application Support/Code/User`, `~/.config/Code/User`, `%APPDATA%\Code\User`) |
+| `windsurf` | Edits `~/.codeium/windsurf/mcp_config.json` |
+| `codex` | Edits `~/.codex/config.toml` (or `$CODEX_HOME`); then run `codex mcp login pantech` |
+| `gemini` | `gemini mcp add --scope user …`, or edits `~/.gemini/settings.json` |
+| `chatgpt` | Prints the connector steps |
+| `grok` | Prints the xAI API tool to add, with a Pantech API key (read-only recommended) |
+
+A config file keeps every other server and setting; the old one is saved as
+`<file>.bak`, and the new one is readable only by you. A file the CLI cannot read
+is left alone. `--print` shows what would be added and changes nothing.
+`pantech mcp status` shows the hosted server, whether `pantech-mcp` is
+installed, and which apps already have Pantech.
 
 ### Exit codes
 

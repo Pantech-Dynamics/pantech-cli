@@ -35,6 +35,7 @@ func (s *Steps) silent() bool { return s.p.JSON || s.p.Quiet }
 
 // Start begins a stage, ending any stage still running without a mark.
 func (s *Steps) Start(label string) {
+	label = Clean(label)
 	s.halt()
 	s.mu.Lock()
 	s.label, s.started = label, time.Now()
@@ -66,6 +67,7 @@ func (s *Steps) Mark(label, detail string) {
 }
 
 func (s *Steps) end(style, glyph, label, detail string) {
+	label, detail = Clean(label), Clean(detail)
 	s.halt()
 	s.mu.Lock()
 	if label == "" {

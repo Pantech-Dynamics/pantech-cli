@@ -62,24 +62,27 @@ func (p *Printer) Value(v any) {
 
 func (p *Printer) Line(format string, a ...any) { fmt.Fprintf(p.Out, format+"\n", a...) }
 
-func (p *Printer) Note(format string, a ...any) { fmt.Fprintf(p.Err, format+"\n", a...) }
+// Note, Success, Warn and Next clean their arguments (Clean): only the
+// format is the CLI's own text. Line prints as given, for secrets, keys and
+// files that must come out byte for byte; clean outside text before it.
+func (p *Printer) Note(format string, a ...any) { fmt.Fprintf(p.Err, format+"\n", cleanArgs(a)...) }
 
 func (p *Printer) Success(format string, a ...any) {
-	fmt.Fprintf(p.Err, "%s %s\n", paint(p.errColor, green, "✓"), fmt.Sprintf(format, a...))
+	fmt.Fprintf(p.Err, "%s %s\n", paint(p.errColor, green, "✓"), fmt.Sprintf(format, cleanArgs(a)...))
 }
 
 func (p *Printer) Warn(format string, a ...any) {
 	if p.Quiet || p.JSON {
 		return
 	}
-	fmt.Fprintf(p.Err, "%s %s\n", paint(p.errColor, yellow, "!"), fmt.Sprintf(format, a...))
+	fmt.Fprintf(p.Err, "%s %s\n", paint(p.errColor, yellow, "!"), fmt.Sprintf(format, cleanArgs(a)...))
 }
 
 func (p *Printer) Next(label, command string) {
 	if p.Quiet || p.JSON {
 		return
 	}
-	fmt.Fprintf(p.Err, "%s %s\n", paint(p.errColor, dim, label+":"), command)
+	fmt.Fprintf(p.Err, "%s %s\n", paint(p.errColor, dim, label+":"), Clean(command))
 }
 
 // Summary is a count under a list, on stderr, only for a person reading it.
@@ -111,11 +114,11 @@ func (p *Printer) State(s string) string {
 
 func stateLook(s string) (string, string) {
 	switch s {
-	case "running", "active", "succeeded", "provisioned", "available", "enabled":
+	case "running", "active", "succeeded", "provisioned", "available", "enabled", "connected", "planned":
 		return "●", green
-	case "stopped", "deleted", "unavailable", "disabled", "canceled":
+	case "stopped", "deleted", "unavailable", "disabled", "canceled", "excluded":
 		return "○", dim
-	case "failed", "payment_failed", "error":
+	case "failed", "payment_failed", "error", "unsupported":
 		return "✗", red
 	case "unknown":
 		return "?", dim
@@ -128,7 +131,14 @@ func stateLook(s string) (string, string) {
 // visible, so colour does not throw the alignment. Piped, the header stays
 // and symbols and colour go.
 func (p *Printer) Table(header []string, rows [][]string) {
-	all := append([][]string{header}, rows...)
+	all := make([][]string, 0, len(rows)+1)
+	for _, row := range append([][]string{header}, rows...) {
+		cleaned := make([]string, len(row))
+		for i, cell := range row {
+			cleaned[i] = p.cleanStyled(cell, p.color)
+		}
+		all = append(all, cleaned)
+	}
 	widths := make([]int, len(header))
 	for _, row := range all {
 		for i, cell := range row {
@@ -165,18 +175,18 @@ type Detail struct {
 
 func (p *Printer) Print(d Detail) {
 	var b strings.Builder
-	b.WriteString(p.Bold(d.Title))
+	b.WriteString(p.Bold(Clean(d.Title)))
 	if d.State != "" {
-		b.WriteString("  " + d.State)
+		b.WriteString("  " + p.cleanStyled(d.State, p.color))
 	}
 	b.WriteByte('\n')
 	if d.Subtitle != "" {
-		b.WriteString(p.Dim(d.Subtitle) + "\n")
+		b.WriteString(p.Dim(Clean(d.Subtitle)) + "\n")
 	}
 	width := 0
 	for _, sec := range d.Sections {
 		for _, pair := range sec {
-			width = max(width, visibleWidth(pair[0]))
+			width = max(width, visibleWidth(Clean(pair[0])))
 		}
 	}
 	for _, sec := range d.Sections {
@@ -185,7 +195,8 @@ func (p *Printer) Print(d Detail) {
 		}
 		b.WriteByte('\n')
 		for _, pair := range sec {
-			fmt.Fprintf(&b, "  %s%s  %s\n", p.Dim(pair[0]), strings.Repeat(" ", width-visibleWidth(pair[0])), pair[1])
+			label := Clean(pair[0])
+			fmt.Fprintf(&b, "  %s%s  %s\n", p.Dim(label), strings.Repeat(" ", max(0, width-visibleWidth(label))), p.cleanStyled(pair[1], p.color))
 		}
 	}
 	_, _ = io.WriteString(p.Out, b.String())
@@ -201,6 +212,9 @@ func (p *Printer) Print(d Detail) {
 // it, and parenthesised details (code, request id) and "See:" lines dimmed.
 func (p *Printer) Error(err error) {
 	lines := strings.Split(err.Error(), "\n")
+	for i, l := range lines {
+		lines[i] = Clean(l)
+	}
 	// Go errors start lower-case; a sentence on screen does not.
 	if r, size := utf8.DecodeRuneInString(lines[0]); r != utf8.RuneError {
 		lines[0] = strings.ToUpper(string(r)) + lines[0][size:]

@@ -2,7 +2,8 @@
 
 The Pantech Dynamics CLI: virtual machines, managed databases, managed
 Kubernetes, volumes, snapshots, networks, public IPs, load balancers, security
-groups, SSH keys, webhooks and the catalogue from your terminal, through the [public API](https://docs.pantechdynamics.com/api).
+groups, SSH keys, webhooks, migrations from AWS and the catalogue from your
+terminal, through the [public API](https://docs.pantechdynamics.com/api).
 
 ```sh
 curl -fsSL https://pantechdynamics.com/install | bash
@@ -62,6 +63,8 @@ pantech security-groups list | get | create | delete | rules set | add | remove
 pantech ssh-keys list | add | delete
 pantech webhooks list | get | create | update | delete | test | rotate-secret | event-types
 pantech webhooks deliveries list | get | redeliver
+pantech migrate connect | connections | connection | set-role | retry | rename-connection | disconnect   (alias: mig)
+pantech migrate scan | scans | scan-show | plan | plans | show | item | rename | delete | terraform
 pantech plans | images | regions
 pantech operations get | wait
 pantech upgrade [version] [--check]                       (alias: update)
@@ -173,6 +176,50 @@ the flags given (`--event` replaces the whole list; `--enable` / `--disable`).
 (`--limit`, `--cursor`, or `--all`), `deliveries get` shows the exact payload
 sent, and `deliveries redeliver` sends one again with the same event id.
 
+### Migrating from AWS
+
+`pantech migrate` reads an AWS account and plans its move to Pantech. Nothing is
+created on Pantech or changed in AWS: a plan is something to review, edit and
+export as Terraform.
+
+```sh
+pantech migrate connect --name "Production AWS"      # saves ./pantech-migrate-<id>.json
+pantech migrate set-role ccn_… --role-arn arn:aws:iam::123456789012:role/… --wait
+pantech migrate scan ccn_… --wait                     # what it runs and what it costs
+pantech migrate plan csn_… --name "Move to Pantech" [--region <region>]
+pantech migrate show mig_…                            # every item, its flags, the price comparison
+pantech migrate item mig_… --key <key> --exclude      # or --include, --plan, --storage-gb, --cidr, --role, --email
+pantech migrate terraform mig_… [--out DIR] [--force] # main.tf and variables.tf
+```
+
+`connect` saves a CloudFormation template that creates, in your account, a
+read-only role only Pantech can assume, with short-lived tokens; no access keys
+are ever sent to Pantech. It prints AWS's one-click create-stack link and opens
+it in your browser (`--no-browser` to only print it; a link to anywhere but
+`console.aws.amazon.com` is never shown or opened). `--template-out PATH` saves
+the template elsewhere; a file already there is kept unless you pass `--force`,
+and a symbolic link is never written through. Create the stack, then send its `RoleArn` output
+with `set-role`; `--wait` (or `connection <id> --watch`) follows the check, and
+`retry` checks again after a failure, and `rename-connection --name` renames one. `disconnect` asks first and removes the
+connection and its scans; delete the stack in AWS to revoke the role there too.
+
+`scan --wait` checks every 3 seconds until the scan has succeeded or failed, then
+shows what it found per kind, the regions read, anything it could not read, and
+the account's monthly bill. Reading spend costs USD 0.01 on your AWS bill, so
+`scan` asks first (`--yes` to skip).
+`scans <connection>` lists them, and `scan-show <scan> [--inventory] [--wait]`
+shows one, with every item it found.
+
+`plan` maps every item to its Pantech equivalent with a price comparison:
+Pantech's monthly price for the planned servers, disks and networks next to the
+account's average monthly bill. `show` lists the items grouped by kind, with
+their status (`planned`, `excluded` or `unsupported`) and flags (`!` marks one
+that makes the item unsupported); use an item's key with `item` to change it.
+`plans` lists them, `rename --name` renames one, and `delete` asks first.
+`terraform` writes the files to `./pantech-migrate-<id>/` and never overwrites
+one without `--force` (nor writes through a symbolic link, even with it); every
+file is checked before any is written, and each is written whole or not at all. A connection check or scan that fails exits with 5.
+
 Every API error is printed with the API's own message, each invalid field and
 what it must be (on a `422`), and the error code and request id to quote to
 support.
@@ -221,7 +268,7 @@ installed, and which apps already have Pantech.
 | 2 | The command was used wrongly |
 | 3 | Not signed in, or the key was refused or lacks the scope |
 | 4 | Not found |
-| 5 | An operation or order finished, but failed |
+| 5 | An operation, order, connection check or scan finished, but failed |
 | 130 | Interrupted |
 
 ## Development

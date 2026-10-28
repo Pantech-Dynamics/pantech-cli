@@ -119,9 +119,9 @@ func run(t *testing.T, srv *httptest.Server, stdinText string, args ...string) r
 	t.Setenv("PANTECH_API_KEY", "PAN_test")
 	t.Setenv("PANTECH_CONFIG_DIR", t.TempDir())
 	t.Setenv("PANTECH_NO_KEYRING", "1")
-	poll := api.PollInterval
-	api.PollInterval = time.Millisecond
-	t.Cleanup(func() { api.PollInterval = poll })
+	poll, migratePoll := api.PollInterval, api.MigratePollInterval
+	api.PollInterval, api.MigratePollInterval = time.Millisecond, time.Millisecond
+	t.Cleanup(func() { api.PollInterval, api.MigratePollInterval = poll, migratePoll })
 	oldStdin := stdin
 	stdin = strings.NewReader(stdinText)
 	t.Cleanup(func() { stdin = oldStdin })

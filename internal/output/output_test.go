@@ -89,3 +89,52 @@ func TestElapsed(t *testing.T) {
 		}
 	}
 }
+
+func TestCleanStripsControlCharacters(t *testing.T) {
+	for in, want := range map[string]string{
+		"web-1":                      "web-1",
+		"a\x1b[2Jb":                  "a[2Jb",
+		"x\x1b]8;;https://evil\x07y": "x]8;;https://evily",
+		"tab\tnew\nline\rcr\x7f":     "tabnewlinecr",
+		"c1\u009b31m\u0085":          "c131m",
+		"bad\xffbyte":                "bad\ufffdbyte",
+		"héllo · 日本":                 "héllo · 日本",
+	} {
+		if got := Clean(in); got != want {
+			t.Errorf("Clean(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestTableAndDetailCleanCellsButKeepOwnColour(t *testing.T) {
+	p, out, _ := printer(true, true)
+	p.Table([]string{"name", "state"}, [][]string{{"evil\x1b]0;title\x07\x1b[2J", p.State("running")}})
+	p.Print(Detail{Title: "t\x1b[2J", Subtitle: "s\x07", Sections: [][]Pair{{{"Name", "v\x1b[1A\r"}}}})
+	got := out.String()
+	for _, bad := range []string{"\x1b]", "\x07", "\x1b[2J", "\x1b[1A", "\r"} {
+		if strings.Contains(got, bad) {
+			t.Fatalf("output has %q: %q", bad, got)
+		}
+	}
+	if !strings.Contains(got, "\x1b[32m● running\x1b[0m") {
+		t.Fatalf("lost its own colour: %q", got)
+	}
+
+	// Piped, even an exact colour sequence from outside goes.
+	p, out, _ = printer(false, false)
+	p.Table([]string{"name"}, [][]string{{"red\x1b[31m"}})
+	if got := out.String(); got != "NAME\nred[31m\n" {
+		t.Fatalf("piped = %q", got)
+	}
+}
+
+func TestMessagesCleanTheirArguments(t *testing.T) {
+	p, _, errOut := printer(true, false)
+	p.Success("Created %s.", "x\x1b[2J")
+	p.Note("Saved to %s", "y\x07")
+	p.Next("Then", "pantech \x1b[2J")
+	p.Error(errors.New("bad\x1b]0;t\x07 name\nSee: z\x1b[1A"))
+	if got := errOut.String(); strings.ContainsAny(got, "\x1b\x07") {
+		t.Fatalf("stderr %q", got)
+	}
+}

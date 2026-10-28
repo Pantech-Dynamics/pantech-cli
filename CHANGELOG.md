@@ -7,6 +7,32 @@ Every pull request that changes what the CLI does adds a line under
 **Unreleased**. Releasing turns that heading into the version and its date; the
 release workflow refuses a tag that has no section here.
 
+## v0.7.0 — 2026-10-28
+
+### Added
+
+- `pantech migrate` (alias `mig`) plans a move from AWS to Pantech, through the
+  public API's Migrate endpoints. `connect --name` starts a connection, saves
+  the read-only role's CloudFormation template to
+  `./pantech-migrate-<id>.json` (`--template-out`), and prints and opens AWS's
+  one-click create-stack link (`--no-browser`); `set-role <id> --role-arn ARN
+  [--wait]` sends the stack's RoleArn and follows the check; `connections`,
+  `connection <id> [--watch]`, `retry [--wait]`, `rename-connection --name` and
+  `disconnect` (asks first)
+  manage connections. `scan <connection> [--wait]` (asks first: reading spend
+  costs USD 0.01 on your AWS bill) reads the account and shows
+  what it found, the regions, warnings and the monthly bill; `scans` and
+  `scan-show [--inventory] [--wait]` list and show scans. `plan <scan> --name
+  [--region]` builds a plan with a monthly price comparison; `plans`, `show`
+  (items grouped by kind, with status and flags), `item --key` (`--exclude`,
+  `--include`, `--plan`, `--storage-gb`, `--cidr`, `--role`, `--email`),
+  `rename` and `delete` (asks first) manage it, and `terraform [--out DIR]
+  [--force]` writes `main.tf` and `variables.tf`, never overwriting a file
+  without `--force`. A connection check or scan that fails exits with 5.
+- Names, messages and other text from the API or a scanned account are printed
+  without control characters, so they cannot steer your terminal (`--json` is
+  unchanged).
+
 ## v0.6.0 — 2026-10-24
 
 ### Added

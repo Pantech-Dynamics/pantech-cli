@@ -21,10 +21,15 @@ func newKubernetesResizeCmd(a *app) *cobra.Command {
 	var noWait bool
 	cmd := &cobra.Command{
 		Use:   "resize <cluster> --node-plan PLAN",
-		Short: "Move every node of a cluster to another plan",
-		Long: `Move every node of a cluster, control and worker, to another plan. Nodes are
-replaced one at a time, so workloads keep running if they have more than
-one replica. Each node is then billed as a VM of the new plan.`,
+		Short: "Move a cluster's control node and workers to another plan",
+		Long: `Move a cluster's control node and default workers to another plan. Nodes are
+resized one at a time: each worker is drained, every node restarts on the
+new plan, and the next one waits until it is Ready again. Workloads keep
+running if they have more than one replica and more than one worker; the
+cluster's API is unavailable for a few minutes while the control node
+restarts. A node's disk only grows, so a plan with a smaller disk is
+refused. The cluster is billed at its current plan until every node runs
+the new one. Node pools keep their own plans.`,
 		Example: `  pantech kubernetes resize prod --node-plan s-4vcpu-8gb`,
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -36,7 +41,7 @@ one replica. Each node is then billed as a VM of the new plan.`,
 			if err != nil {
 				return err
 			}
-			if err := a.confirm(fmt.Sprintf("Move every node of %s to %s? Each is then billed as a %s VM.", args[0], nodePlan, nodePlan)); err != nil {
+			if err := a.confirm(fmt.Sprintf("Move %s's nodes to %s, one at a time? Each node restarts, and is billed as a %s VM once every node has moved.", args[0], nodePlan, nodePlan)); err != nil {
 				return err
 			}
 			req := api.Request{Method: http.MethodPost, Path: clusterPath(id) + "/resize-plan", Body: map[string]any{"node_plan": nodePlan}}

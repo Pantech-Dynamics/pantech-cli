@@ -7,6 +7,15 @@ Every pull request that changes what the CLI does adds a line under
 **Unreleased**. Releasing turns that heading into the version and its date; the
 release workflow refuses a tag that has no section here.
 
+## Unreleased
+
+### Changed
+
+- `pantech kubernetes resize` says what a node plan change does: nodes are
+  resized one at a time and restart, the cluster's API is briefly unavailable
+  while the control node restarts, disks only grow, and the cluster is billed
+  at the new plan only once every node runs it.
+
 ## v0.7.0 — 2026-10-28
 
 ### Added

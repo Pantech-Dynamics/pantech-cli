@@ -27,9 +27,10 @@ resized one at a time: each worker is drained, every node restarts on the
 new plan, and the next one waits until it is Ready again. Workloads keep
 running if they have more than one replica and more than one worker; the
 cluster's API is unavailable for a few minutes while the control node
-restarts. A node's disk only grows, so a plan with a smaller disk is
-refused. The cluster is billed at its current plan until every node runs
-the new one. Node pools keep their own plans.`,
+restarts. A smaller plan works too: a node's disk only grows, so the nodes
+take its vCPU and memory and keep the disk they have. The cluster is billed
+at its current plan until every node runs the new one. Node pools keep
+their own plans.`,
 		Example: `  pantech kubernetes resize prod --node-plan s-4vcpu-8gb`,
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {

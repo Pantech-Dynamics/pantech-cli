@@ -13,8 +13,9 @@ release workflow refuses a tag that has no section here.
 
 - `pantech kubernetes resize` says what a node plan change does: nodes are
   resized one at a time and restart, the cluster's API is briefly unavailable
-  while the control node restarts, disks only grow, and the cluster is billed
-  at the new plan only once every node runs it.
+  while the control node restarts, a smaller plan keeps the nodes' disk (disks
+  only grow), and the cluster is billed at the new plan only once every node
+  runs it.
 
 ## v0.7.0 — 2026-10-28
 

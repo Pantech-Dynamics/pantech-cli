@@ -9,6 +9,10 @@ release workflow refuses a tag that has no section here.
 
 ## Unreleased
 
+### Added
+
+- `pantech db snapshots schedule get` and `set`: take a database's snapshots automatically.
+
 ## v0.9.0 — 2026-11-24
 
 ### Added

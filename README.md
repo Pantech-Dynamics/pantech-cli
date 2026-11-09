@@ -128,7 +128,7 @@ plan's disk) and only ever grows: `db storage resize <db> --storage-gb N` refuse
 a size that is not larger, waits for the resize, and `db get` shows the size a
 resize in flight is growing to. Both check the size against the zone's limits
 (minimum, maximum and step, which `db engines` lists with the price per GB)
-before anything is sent; when those cannot be read, the API decides. `db snapshots` takes crash-consistent snapshots
+before anything is sent; when those cannot be read, the API decides. `db snapshots schedule` takes them automatically. `db snapshots` takes crash-consistent snapshots
 of the data disk, billed until deleted.
 
 `pantech vm private-network attach <vm>` gives a standard VM an interface on

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strconv"
 
 	"github.com/spf13/cobra"
 
@@ -174,7 +175,7 @@ func newDBSnapshotsCmd(a *app) *cobra.Command {
 		Aliases: []string{"snapshot", "snap"},
 		Short:   "Snapshot a database's data disk",
 	}
-	cmd.AddCommand(newDBSnapshotsListCmd(a), newDBSnapshotsGetCmd(a), newDBSnapshotsCreateCmd(a), newDBSnapshotsDeleteCmd(a))
+	cmd.AddCommand(newDBSnapshotsListCmd(a), newDBSnapshotsGetCmd(a), newDBSnapshotsCreateCmd(a), newDBSnapshotsDeleteCmd(a), newDBSnapshotsScheduleCmd(a))
 	return cmd
 }
 
@@ -307,5 +308,112 @@ func newDBSnapshotsDeleteCmd(a *app) *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVar(&noWait, "no-wait", false, "return the operation id without waiting")
+	return cmd
+}
+
+// newDBSnapshotsScheduleCmd reads and sets a database's automatic snapshots.
+func newDBSnapshotsScheduleCmd(a *app) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "schedule",
+		Short: "Take a database's snapshots automatically",
+	}
+	cmd.AddCommand(newDBScheduleGetCmd(a), newDBScheduleSetCmd(a))
+	return cmd
+}
+
+func dbSchedulePath(id string) string {
+	return "/databases/" + url.PathEscape(id) + "/snapshot-schedule"
+}
+
+func printDBSchedule(a *app, ref string, s *api.SnapshotSchedule) {
+	status := "on"
+	if !s.Enabled {
+		status = "paused"
+	}
+	a.out.Print(output.Detail{
+		Title: ref,
+		Sections: [][]output.Pair{
+			{{"Automatic snapshots", status}, {"How often", s.Frequency}, {"Copies kept", strconv.Itoa(s.RetentionCount)}, {"Next", output.When(s.NextRunAt)}},
+		},
+	})
+}
+
+func newDBScheduleGetCmd(a *app) *cobra.Command {
+	return &cobra.Command{
+		Use:     "get <database>",
+		Aliases: []string{"show"},
+		Short:   "Show a database's automatic snapshot schedule",
+		Args:    cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := a.client()
+			if err != nil {
+				return err
+			}
+			id, err := resolveDatabase(cmd, c, args[0])
+			if err != nil {
+				return err
+			}
+			var s api.SnapshotSchedule
+			if ok, err := getOne(a, cmd, c, dbSchedulePath(id), &s); !ok {
+				return err
+			}
+			printDBSchedule(a, args[0], &s)
+			return nil
+		},
+	}
+}
+
+func newDBScheduleSetCmd(a *app) *cobra.Command {
+	var frequency string
+	var keep int
+	var paused bool
+	cmd := &cobra.Command{
+		Use:   "set <database> --frequency daily|weekly|monthly",
+		Short: "Turn on, change or pause a database's automatic snapshots",
+		Long: `Take snapshots of a database's data disk on a schedule, in UTC. Each copy is
+crash-consistent, like a manual snapshot, and billed for its size every hour
+until it is removed. Past --keep, the oldest automatic copy is removed after 12
+hours. Use --paused to stop taking copies and keep the ones already taken.`,
+		Example: `  pantech db snapshots schedule set app --frequency daily --keep 14
+  pantech db snapshots schedule set app --frequency daily --paused`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if frequency != "daily" && frequency != "weekly" && frequency != "monthly" {
+				return &usageError{fmt.Errorf("--frequency must be daily, weekly or monthly"), cmd}
+			}
+			if keep < 1 || keep > 168 {
+				return &usageError{fmt.Errorf("--keep must be from 1 to 168"), cmd}
+			}
+			c, err := a.client()
+			if err != nil {
+				return err
+			}
+			id, err := resolveDatabase(cmd, c, args[0])
+			if err != nil {
+				return err
+			}
+			if !paused {
+				if err := a.confirm(fmt.Sprintf("Take %s snapshots of %s, keeping %d? Each copy is billed for its size until removed.", frequency, args[0], keep)); err != nil {
+					return err
+				}
+			}
+			req := api.Request{Method: http.MethodPut, Path: dbSchedulePath(id), Body: map[string]any{"frequency": frequency, "retention_count": keep, "enabled": !paused}}
+			var s api.SnapshotSchedule
+			res, err := c.Do(ctx(cmd), req, &s)
+			if err != nil {
+				return err
+			}
+			if a.out.JSON {
+				a.out.RawJSON(res.Body)
+				return nil
+			}
+			printDBSchedule(a, args[0], &s)
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&frequency, "frequency", "", "daily, weekly or monthly, in UTC (required)")
+	cmd.Flags().IntVar(&keep, "keep", 7, "automatic copies to keep, from 1 to 168")
+	cmd.Flags().BoolVar(&paused, "paused", false, "stop taking copies and keep the ones already taken")
+	_ = cmd.MarkFlagRequired("frequency")
 	return cmd
 }

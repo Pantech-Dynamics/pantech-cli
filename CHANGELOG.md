@@ -7,6 +7,12 @@ Every pull request that changes what the CLI does adds a line under
 **Unreleased**. Releasing turns that heading into the version and its date; the
 release workflow refuses a tag that has no section here.
 
+## Unreleased
+
+### Added
+
+- `pantech db snapshots schedule get` and `set`: take a database's snapshots automatically.
+
 ## v0.7.1 — 2026-11-06
 
 ### Changed

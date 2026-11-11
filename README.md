@@ -2,8 +2,8 @@
 
 The Pantech Dynamics CLI: virtual machines, managed databases, managed
 Kubernetes, volumes, snapshots, networks, public IPs, load balancers, security
-groups, SSH keys, webhooks, migrations from AWS and the catalogue from your
-terminal, through the [public API](https://docs.pantechdynamics.com/api).
+groups, SSH keys, webhooks, DNS zones and domains, a private container registry,
+teams and access policies, TLS certificates, migrations from AWS and the catalogue from your terminal, through the [public API](https://docs.pantechdynamics.com/api).
 
 ```sh
 curl -fsSL https://pantechdynamics.com/install | bash
@@ -65,6 +65,19 @@ pantech webhooks list | get | create | update | delete | test | rotate-secret | 
 pantech webhooks deliveries list | get | redeliver
 pantech migrate connect | connections | connection | set-role | retry | rename-connection | disconnect   (alias: mig)
 pantech migrate scan | scans | scan-show | plan | plans | show | item | rename | delete | terraform
+pantech dns zones list | create | get | update | delete | verify
+pantech dns records list | create | get | update | delete
+pantech dns import <zone> --file f.zone [--replace] | export <zone>
+pantech domains tlds | search | transfer-check | list | get | register | transfer | renew
+pantech domains set | nameservers | contact | auth-code | orders
+pantech registry namespace [get | set <name>] | login                (alias: cr)
+pantech registry repos list | create | get | update | delete
+pantech registry tags list | get | delete
+pantech registry tokens list | create | revoke
+pantech iam actions | members [--q] | settings [get | set] | access <member> | simulate
+pantech iam teams list | create | get | update | delete | members <team> [add | remove <member>]
+pantech iam policies list | create | get | update | delete | attachments | attach | detach
+pantech certificates list | request | import | get | update | verify | reimport | export | revoke | delete   (alias: certs)
 pantech plans | images | regions
 pantech operations get | wait
 pantech upgrade [version] [--check]                       (alias: update)
@@ -154,6 +167,14 @@ a static_nat address cannot be deleted until it is detached or released.
 across VMs; `update` renames it, changes the algorithm, or replaces its targets
 (`--targets`, or `--no-targets`).
 
+An appliance load balancer (`--zone` in a standard zone) can end HTTPS:
+`--protocol https --certificate cert_…` serves an issued certificate from
+`pantech certificates` (renewals reach it by themselves) and speaks plain HTTP to
+your VMs; `--tls-policy modern|tls13` (default `modern`) and `--redirect-http`
+(port 80 answers with a redirect to HTTPS). `update` takes the same three flags.
+A certificate in use cannot be revoked or deleted; vpc_native load balancers
+pass TLS through as `tcp`.
+
 `pantech kubernetes create --name prod --zone <zone> --version 1.31.2
 --node-plan <plan> [--subnet <subnet>] [--control-nodes 1|3] (--workers N |
 --autoscale MIN:MAX) [--api-allow CIDR…]` creates a cluster; every node is
@@ -227,6 +248,159 @@ support.
 The CLI sends an `Idempotency-Key` with every write and retries network errors,
 429s and 5xxs with the same key, so a retried change never happens twice.
 
+### DNS and domains
+
+`pantech dns` hosts zones on Pantech DNS, on Pantech's own name servers, and manages
+their records; `pantech domains` buys domains, paid from your organization's
+credit. Zones and domains are named by id (`dnsz_…`, `dom_…`) or by name.
+
+```sh
+pantech dns zones create example.com                  # prints the 2 name servers to set at your registrar
+pantech dns zones quote                               # 5 zones free; what further ones cost a month
+pantech dns zones verify example.com                  # check the delegation now
+pantech dns records create example.com --name www --type A --value 203.0.113.10 [--ttl 300] [--wait]
+pantech dns records update example.com dnsr_… --value 203.0.113.20 [--if-match <version>]
+pantech dns export example.com > example.com.zone
+pantech dns import example.com --file example.com.zone [--replace]
+
+pantech domains search example                        # availability and prices
+pantech domains register example.com --years 1 --contact-file contact.json --accept-terms [--wait]
+pantech domains transfer example.com --auth-code-stdin --contact-file contact.json --accept-terms < code.txt
+pantech domains renew example.com --years 1
+pantech domains set example.com --auto-renew=on --lock=on --privacy=on
+pantech domains nameservers example.com --pantech     # or --ns ns1.example.net --ns ns2.example.net
+pantech domains contact example.com [--set contact.json]
+pantech domains auth-code example.com > code.txt      # to move the domain elsewhere
+pantech domains orders example.com
+pantech domains retry-payment dor_… [--wait]          # an order waiting for its payment
+```
+
+A new zone is `awaiting_delegation` until the domain's registrar points at
+exactly its two name servers (records added meanwhile stay `pending` until it
+is active); one left undelegated for 14 days is removed. A
+domain bought through Pantech gets an active zone at once. Record changes are
+`pending` until live, within about a minute: `--wait` follows one, and a change
+that is refused exits with 5. `--value` is repeated for each value (commas in a
+value are kept). `--if-match` changes or deletes a record only if its version
+is still the one you read. `import --replace` deletes the records not in the
+file, so it asks first; `zones delete` and `records delete` ask too.
+
+`register`, `transfer` and `renew` show the price (before VAT) and that it is
+charged to your organization's credit, and ask first (`--yes` to skip); a
+failed order returns it to credit, and `--wait` exits with 5 when the order
+fails. When your credit falls short, the order waits an hour for the rest: in
+US dollars your saved card is charged the difference, and the command prints a
+link only if your bank asks you to confirm the payment (on stderr; with
+`--quiet`, the link alone); in naira, add credit. `domains retry-payment
+<order>` tries again at once (after a declined card, a new saved card or new
+credit) and waits another hour; it never charges twice. `--wait` follows the
+order until the payment lands and it finishes. Unpaid when the window ends, it
+fails `insufficient_credit` and nothing is charged.
+`--contact-file` is a JSON file with the registrant (`type`, `first_name`,
+`last_name`, `organization_name` for a company, `email`, `phone` as
+`+CC.NUMBER`, `address_line1`, `city`, `state`, `country_code`, `postal_code`);
+it is sent to the API and never printed, and only `domains contact` shows it,
+to owners and admins. `--accept-terms` accepts the registrant agreement.
+Privacy protection, auto-renew and the transfer lock are on by default
+(`--no-privacy`, `--auto-renew=false`; `domains set --lock=off` before moving away).
+The .ng registry hides every registrant's contact details, so privacy is always
+on for .ng domains (`domains tlds` shows "always on") and `--no-privacy` or
+`--privacy=off` is refused; .ng contacts need `state` and `postal_code`, and a
+name.ng registrant must be a person. `auth-code` asks first, then prints the code once,
+alone on stdout: anyone with it can move the domain away from Pantech.
+
+### Container registry
+
+`pantech registry` manages your organization's private registry at
+`registry.pantechdynamics.com`. Repositories are named by id (`crr_…`) or by
+name (`api/server`, `acme/api/server`, or the full image name).
+
+```sh
+pantech registry namespace set acme                   # claim your namespace (once)
+pantech registry login                                # docker login with your API key, on stdin
+docker push registry.pantechdynamics.com/acme/api/server:v1
+
+pantech registry repos create api/server --keep-last 50 --keep-pattern "v*" [--immutable-tags]
+pantech registry repos update api/server --visibility public
+pantech registry tags list api/server
+pantech registry tags delete api/server v1
+pantech registry tokens create --name github-actions --permission push --repo api/server > token.txt
+pantech registry login --token-stdin < token.txt      # how CI logs in
+pantech registry tokens revoke prt_…
+```
+
+`login` runs `docker login <registry> -u pantech --password-stdin` and gives it
+the CLI's API key, or a registry token with `--token-stdin` (or `--token`), on
+stdin: the credential is never on a command line. `--engine podman` uses
+podman, and `--registry` (or `$PANTECH_REGISTRY`) another registry host. Without
+docker or podman installed it says how to get one.
+
+Registry tokens log in to the registry only, never to the API: `pull`, or `push`
+(which includes pull), for every repository or those named with `--repo`, and
+`--expires 90d` (or a date) to end one. `tokens create` prints the secret once,
+alone on stdout. `repos delete`, `tags delete`, `tokens revoke` and making a
+repository public ask first (`--yes` to skip). A retention flag of `0` (or
+`--keep-pattern ""`) removes that rule, and `--no-retention` removes them all.
+
+### Teams and access policies
+
+`pantech iam` decides who in your organization may do what. Owners are allowed
+everything; a matching deny wins, for admins too; admins are otherwise allowed
+everything; members get what their policies (attached to them or their teams)
+allow, plus every Read action while the member baseline is `read`. Teams and
+policies are named by id or by name, members by id (`usr_…`) or email.
+
+```sh
+pantech iam actions --service instances               # what policies are written in
+pantech iam policies create --file staging-operators.json
+pantech iam teams create Platform
+pantech iam teams members Platform add ada@example.com
+pantech iam policies attach staging-operators --team Platform
+pantech iam access ada@example.com                    # role, teams, policies, baseline
+pantech iam simulate --user ada@example.com --action instances:Delete --resource-name prod-api
+pantech iam settings set --member-baseline none       # members get only what policies allow
+```
+
+A policy file is `{"name", "description", "statements": [...]}`, or a bare array
+of statements with `--name`; `pantech iam policies --help` shows one, and a
+field the CLI does not know is refused rather than ignored. `policies update`
+replaces the statements and keeps the name and description unless given; it
+sends `If-Match` with the version it just read (or `--if-match`), so a change
+made meanwhile is never overwritten. Pantech's own policies (`pol_pantech_…`)
+can be attached but not changed.
+
+`attach`, `detach`, `policies update`, `policies delete`, `teams delete`, adding
+and removing team members, and `settings set --member-baseline none` ask first
+(`--yes` to skip): each changes what people may do within seconds. An email
+must match exactly one member, ignoring case; `pantech iam members [--q]` lists
+them.
+
+### Certificates
+
+`pantech certificates` gets TLS certificates issued free by a publicly trusted CA
+and renewed automatically 30 days before they expire.
+
+```sh
+pantech certificates request example.com '*.example.com' api.example.org --exportable --wait
+pantech certificates verify cert_…                  # check the CNAMEs now
+pantech certificates export cert_… --out-dir /etc/ssl/example
+pantech certificates import --cert cert.pem --chain chain.pem --key key.pem
+pantech certificates reimport cert_… --cert new.pem --key new-key.pem
+```
+
+Names in an active Pantech DNS zone are validated automatically. For any other
+name, `request` (and `get` and `verify`) print the CNAME record to add at its
+DNS host, once (`_acme-challenge.<name> CNAME <token>.acme.pantechdynamics.com`):
+it keeps every renewal automatic while it stays. `--wait` follows a request
+until it is issued; one that fails exits with 5.
+
+`export` works only for a certificate created with `--exportable`. It writes
+`cert.pem`, `chain.pem`, `fullchain.pem` and `privkey.pem` to `--out-dir`
+(default `./<certificate id>`) with mode 0600, never over a file without
+`--force` nor through a symbolic link, and prints the key only with `--stdout`.
+Every export emails your owners and admins. `export`, `revoke` and `delete`
+ask first (`--yes` to skip).
+
 ### MCP
 
 `pantech mcp install <client>` connects an AI app to Pantech through the Model
@@ -268,7 +442,7 @@ installed, and which apps already have Pantech.
 | 2 | The command was used wrongly |
 | 3 | Not signed in, or the key was refused or lacks the scope |
 | 4 | Not found |
-| 5 | An operation, order, connection check or scan finished, but failed |
+| 5 | An operation, order (including a domain order), connection check, scan, DNS record change or certificate request finished, but failed |
 | 130 | Interrupted |
 
 ## Development

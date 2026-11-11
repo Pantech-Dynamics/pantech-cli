@@ -51,8 +51,9 @@ func newRoot(a *app) *cobra.Command {
 		Short: "Manage Pantech Dynamics cloud from your terminal",
 		Long: `Manage Pantech Dynamics cloud from your terminal: virtual machines, managed
 databases, managed Kubernetes, volumes, snapshots, networks, public IPs, load
-balancers, security groups, SSH keys, webhooks, migrations from AWS and the
-catalogue, through the public API.
+balancers, security groups, SSH keys, webhooks, DNS zones and domains, a
+private container registry, teams and access policies, TLS certificates,
+migrations from AWS and the catalogue, through the public API.
 
 Sign in with "pantech auth login". In CI, set PANTECH_API_KEY instead.`,
 		SilenceUsage:  true,
@@ -96,6 +97,11 @@ Sign in with "pantech auth login". In CI, set PANTECH_API_KEY instead.`,
 		newSSHKeysCmd(a),
 		newWebhooksCmd(a),
 		newMigrateCmd(a),
+		newDNSCmd(a),
+		newDomainsCmd(a),
+		newRegistryCmd(a),
+		newIAMCmd(a),
+		newCertificatesCmd(a),
 		newPlansCmd(a),
 		newImagesCmd(a),
 		newRegionsCmd(a),

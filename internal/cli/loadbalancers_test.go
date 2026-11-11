@@ -164,3 +164,66 @@ func TestLoadBalancersDelete(t *testing.T) {
 		t.Fatal("the delete was not followed")
 	}
 }
+
+func TestLoadBalancersCreateHTTPS(t *testing.T) {
+	f, srv := newFakeAPI(t)
+	f.on("POST /load-balancers", 202, `{"operation_id":"op_1","resource_id":"lb_1","status":"submitting"}`)
+	r := run(t, srv, "", "lb", "create", "--name", "web", "--zone", "af-abj-1", "--port", "443", "--private-port", "8080",
+		"--protocol", "https", "--certificate", "cert_1", "--tls-policy", "tls13", "--redirect-http", "--no-wait", "--yes")
+	if r.err != nil {
+		t.Fatal(r.err)
+	}
+	want := map[string]any{"name": "web", "kind": "appliance", "zone_id": "af-abj-1", "public_port": float64(443), "private_port": float64(8080),
+		"protocol": "https", "certificate_id": "cert_1", "tls_policy": "tls13", "redirect_http": true}
+	if got := f.sentJSON("POST", "/load-balancers"); !reflect.DeepEqual(got, want) {
+		t.Fatalf("body = %v\nwant   %v", got, want)
+	}
+}
+
+func TestLoadBalancersHTTPSUsageErrors(t *testing.T) {
+	f, srv := newFakeAPI(t)
+	f.on("POST /load-balancers", 202, `{"operation_id":"op_1","resource_id":"lb_1","status":"submitting"}`)
+	for _, extra := range [][]string{
+		{"--zone", "af-abj-1", "--protocol", "https"},     // no certificate
+		{"--zone", "af-abj-1", "--certificate", "cert_1"}, // TLS flags without https
+		{"--zone", "af-abj-1", "--protocol", "https", "--certificate", "cert_1", "--tls-policy", "old"},
+		{"--public-ip", "pip_9", "--subnet", "snet_1", "--protocol", "https", "--certificate", "cert_1"}, // vpc_native
+		{"--zone", "af-abj-1", "--protocol", "udp"},
+	} {
+		args := append([]string{"lb", "create", "--name", "web", "--port", "443", "--yes", "--no-wait"}, extra...)
+		if r := run(t, srv, "", args...); !IsUsage(r.err) {
+			t.Fatalf("%v: err %v", extra, r.err)
+		}
+	}
+	if len(f.sent("POST", "/load-balancers")) != 0 {
+		t.Fatal("sent a refused create")
+	}
+}
+
+func TestLoadBalancersUpdateHTTPSAndGet(t *testing.T) {
+	https := strings.Replace(lbBody, `"protocol":"tcp"`, `"protocol":"https","certificate_id":"cert_1","certificate_fingerprint_sha256":"ab12cd","tls_policy":"modern","redirect_http":true`, 1)
+	f, srv := newFakeAPI(t)
+	f.on("GET /load-balancers/lb_1", 200, https)
+	f.on("PATCH /load-balancers/lb_1", 202, `{"operation_id":"op_2","resource_id":"lb_1","status":"submitting"}`)
+	if r := run(t, srv, "", "lb", "update", "lb_1", "--certificate", "cert_2", "--redirect-http=false", "--no-wait"); r.err != nil {
+		t.Fatal(r.err)
+	}
+	if got, want := f.sentJSON("PATCH", "/load-balancers/lb_1"), map[string]any{"certificate_id": "cert_2", "redirect_http": false}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("body = %v", got)
+	}
+	r := run(t, srv, "", "lb", "get", "lb_1")
+	for _, want := range []string{"cert_1", "ab12cd", "modern", "port 80 → HTTPS"} {
+		if r.err != nil || !strings.Contains(r.stdout, want) {
+			t.Fatalf("stdout lacks %q (err %v):\n%s", want, r.err, r.stdout)
+		}
+	}
+}
+
+func TestLoadBalancersTLSNotSupportedSaysWhy(t *testing.T) {
+	f, srv := newFakeAPI(t)
+	f.on("POST /load-balancers", 422, `{"status":422,"code":"VALIDATION_FAILED","detail":"protocol: https is offered on appliance load balancers only.","errors":[{"field":"protocol","code":"LOAD_BALANCER_TLS_NOT_SUPPORTED","message":"https is offered on appliance load balancers only"}]}`)
+	r := run(t, srv, "", "lb", "create", "--name", "web", "--kind", "appliance", "--zone", "af-abj-1", "--port", "443", "--protocol", "https", "--certificate", "cert_1", "--yes", "--no-wait")
+	if r.err == nil || !strings.Contains(r.err.Error(), "passes TLS through as tcp") {
+		t.Fatalf("err %v", r.err)
+	}
+}

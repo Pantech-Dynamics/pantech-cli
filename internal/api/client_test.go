@@ -243,3 +243,47 @@ func TestRequestIDWithoutCodeAndFlagNames(t *testing.T) {
 		t.Fatalf("Error() = %q", err.Error())
 	}
 }
+
+func TestRequestHeadersAreSentButCannotReplaceTheClients(t *testing.T) {
+	var got http.Header
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.Header.Clone()
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = w.Write([]byte("$ORIGIN example.com.\n"))
+	}))
+	t.Cleanup(srv.Close)
+	c := New(srv.URL, "PAN_test", "test")
+	h := http.Header{}
+	h.Set("If-Match", "3")
+	h.Set("Accept", "text/dns")
+	h.Set("Authorization", "Bearer stolen")
+	h.Set("Idempotency-Key", "fixed")
+	res, err := c.Do(context.Background(), Request{Method: http.MethodPatch, Path: "/x", Header: h}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Status != http.StatusAccepted || string(res.Body) != "$ORIGIN example.com.\n" {
+		t.Fatalf("status %d body %q", res.Status, res.Body)
+	}
+	if got.Get("If-Match") != "3" || got.Get("Accept") != "text/dns" {
+		t.Fatalf("headers %v", got)
+	}
+	if got.Get("Authorization") != "Bearer PAN_test" || got.Get("Idempotency-Key") == "fixed" || got.Get("Idempotency-Key") == "" {
+		t.Fatalf("the client's own headers were replaced: %v", got)
+	}
+}
+
+func TestAcceptDefaultsToJSON(t *testing.T) {
+	var accept string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		accept = r.Header.Get("Accept")
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	t.Cleanup(srv.Close)
+	if _, err := New(srv.URL, "PAN_test", "test").Do(context.Background(), Request{Method: http.MethodGet, Path: "/me"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if accept != "application/json" {
+		t.Fatalf("Accept = %q", accept)
+	}
+}

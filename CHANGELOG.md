@@ -7,6 +7,87 @@ Every pull request that changes what the CLI does adds a line under
 **Unreleased**. Releasing turns that heading into the version and its date; the
 release workflow refuses a tag that has no section here.
 
+## Unreleased
+
+## v0.8.0 — 2026-11-10
+
+### Added
+
+- `pantech dns` manages zones on Pantech DNS: `zones list | create | get |
+  update | delete | verify` (`create` prints the name servers to set at your
+  registrar; `delete` asks first), `records list | create | get | update |
+  delete` (`--value` repeatable, `--ttl`, `--allow-private`, `--comment`,
+  `--wait` until the change is live, `--if-match <version>`; `delete` asks
+  first), `import <zone> --file f.zone [--replace]` (`--replace` asks first;
+  `-` reads stdin) and `export <zone>`, which prints the BIND zone file.
+- `pantech domains`: `tlds`, `search`, `transfer-check`, `list`, `get`;
+  `register` and `transfer` (`--years`, `--contact-file`, `--auto-renew`,
+  `--no-privacy`, `--accept-terms`, `--wait`; `transfer` takes the auth code
+  with `--auth-code-stdin` or `--auth-code`) and `renew --years`, which show
+  the price charged to your credit and ask first; `set --auto-renew --lock
+  --privacy` (on/off), `nameservers --pantech [--zone] | --ns …`, `contact
+  [--set file]`, `auth-code` (asks first, prints the code once) and `orders`.
+  Zones and domains are named by id or by name. A domain order or a DNS record
+  change that fails exits with 5.
+- `pantech registry` (alias `cr`) manages the private container registry:
+  `namespace [get | set <name>] [--create-on-push]`; `repos list | create |
+  get | update | delete` (`--description`, `--visibility`, `--immutable-tags`,
+  `--keep-last`, `--untagged-after-days`, `--keep-pattern`, `--no-retention`;
+  making one public and deleting ask first); `tags list | get | delete <repo>
+  <tag>`; `tokens list | create | revoke` (`--permission pull|push`, `--repo`,
+  `--expires`; `create` prints the secret once, alone on stdout). Repositories
+  are named by id or by name. `registry login` runs `docker login` (or podman,
+  `--engine podman`) with the API key or a registry token (`--token-stdin`,
+  `--token`) on stdin, never on the command line; `--registry` picks another
+  host.
+- `pantech iam` manages teams and access policies: `actions [--service]`;
+  `members [--q]`;
+  `settings [get | set --member-baseline read|none]` (`none` asks first);
+  `teams list | create | get | update | delete` and `teams members <team>
+  [add | remove <member>]`; `policies list [--managed | --custom] | create
+  --file | get | update --file [--if-match] | delete | attachments | attach |
+  detach` (`--member` or `--team`); `access <member>` for a member's effective
+  access; `simulate --user --action [--resource] [--resource-name] [--ip]
+  [--mfa]`. Teams and policies are named by id or name, members by id or
+  email. Attaching, detaching, replacing or deleting a policy, deleting a team
+  and adding or removing a team member ask first.
+- `pantech certificates` (alias `certs`): `list [--q --status --kind]`,
+  `request <name>... [--key-type] [--exportable] [--wait]` (prints the CNAME
+  records to add for names not in a Pantech DNS zone), `import` and `reimport`
+  (`--cert`, `--chain`, `--key`), `get`, `update --description`, `verify
+  [--wait]`, `export [--out-dir] [--force] [--stdout]` (writes cert, chain,
+  full chain and key files with mode 0600; prints the key only with
+  `--stdout`), `revoke [--reason]` and `delete`. Export, revoke and delete ask
+  first. A certificate that fails while waited for exits with 5.
+- `dns zones get` shows when a zone awaiting delegation is removed, and
+  policies show `mfa: false` conditions as "without MFA".
+- `pantech dns zones quote`: five zones are free; it shows what further zones
+  cost a month in your currency.
+- Payment for domain orders: when credit falls short, the order waits an hour
+  for the rest. In US dollars your saved card is charged the difference, and
+  `domains register`, `transfer` and `renew` print a link only if your bank
+  asks you to confirm the payment (with `--quiet`, the link alone on stderr);
+  in naira they say to add credit. `--wait` follows the order through the
+  payment until it finishes, or fails `insufficient_credit` with nothing
+  charged. Prices are shown before VAT.
+- `pantech domains retry-payment <order> [--wait]` tries a waiting order's
+  payment again now (the saved card once more, or credit just added) and gives
+  it another hour; it asks first and never charges twice. `domains orders`
+  says what to do for an order that is `awaiting_payment`.
+- .ng domains: `domains tlds` shows privacy as "always on" for TLDs whose
+  registry hides every registrant's contact details, and `--no-privacy` or
+  `domains set --privacy=off` is refused for them.
+- HTTPS on appliance load balancers: `load-balancers create --protocol https
+  --certificate cert_… [--tls-policy modern|tls13] [--redirect-http]`, the same
+  TLS flags on `update`, and `get` shows the certificate, the fingerprint being
+  served, the TLS policy and the redirect.
+
+### Changed
+
+- Pantech DNS runs on Pantech's own name servers: a zone gets two name
+  servers, and records added while it awaits delegation stay `pending` until it
+  is active. The help and README say so.
+
 ## v0.7.1 — 2026-11-06
 
 ### Changed

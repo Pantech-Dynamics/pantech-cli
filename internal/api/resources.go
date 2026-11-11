@@ -142,10 +142,15 @@ type LoadBalancer struct {
 	PrivatePort     int                  `json:"private_port"`
 	CIDRList        []string             `json:"cidr_list"`
 	Members         []LoadBalancerMember `json:"members"`
-	DesiredState    string               `json:"desired_state"`
-	ObservedState   string               `json:"observed_state"`
-	InSync          *bool                `json:"in_sync"`
-	CreatedAt       *string              `json:"created_at"`
+	// CertificateID, TLSPolicy and RedirectHTTP are set for an https listener.
+	CertificateID                *string `json:"certificate_id"`
+	CertificateFingerprintSHA256 *string `json:"certificate_fingerprint_sha256"`
+	TLSPolicy                    *string `json:"tls_policy"`
+	RedirectHTTP                 bool    `json:"redirect_http"`
+	DesiredState                 string  `json:"desired_state"`
+	ObservedState                string  `json:"observed_state"`
+	InSync                       *bool   `json:"in_sync"`
+	CreatedAt                    *string `json:"created_at"`
 }
 
 type KubernetesVersion struct {

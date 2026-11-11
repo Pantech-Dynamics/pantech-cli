@@ -20,6 +20,7 @@ import (
 type call struct {
 	Method, Path, Query, IdempotencyKey string
 	Body                                []byte
+	Header                              http.Header
 }
 
 // reply is one canned answer; a route with several answers gives them in
@@ -56,7 +57,7 @@ func (f *fakeAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	body, _ := io.ReadAll(r.Body)
 	path := strings.TrimPrefix(r.URL.Path, "/public/v1")
 	f.mu.Lock()
-	f.calls = append(f.calls, call{r.Method, path, r.URL.RawQuery, r.Header.Get("Idempotency-Key"), body})
+	f.calls = append(f.calls, call{r.Method, path, r.URL.RawQuery, r.Header.Get("Idempotency-Key"), body, r.Header.Clone()})
 	key := r.Method + " " + path
 	replies, ok := f.routes[key]
 	i := f.served[key]

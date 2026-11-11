@@ -134,6 +134,21 @@ func IsCode(err error, code string) bool {
 	return errors.As(err, &p) && p.Code == code
 }
 
+// HasFieldCode reports whether err is, or wraps, a problem naming field
+// with this field error code.
+func HasFieldCode(err error, field, code string) bool {
+	var p *Problem
+	if !errors.As(err, &p) {
+		return false
+	}
+	for _, fe := range p.Errors {
+		if fe.Field == field && fe.Code == code {
+			return true
+		}
+	}
+	return false
+}
+
 // Request is one call. Path is relative to /public/v1, e.g. "/instances".
 type Request struct {
 	Method string
@@ -144,6 +159,10 @@ type Request struct {
 	// by Idempotency-Key (creating or deleting an SSH key): a retry after a
 	// lost answer would act twice, or lose a generated private key.
 	NoRetry bool
+	// Header adds headers to the request, such as If-Match, or an Accept
+	// for an answer that is not JSON. Authorization, Idempotency-Key and
+	// Content-Type are the client's own and cannot be replaced.
+	Header http.Header
 }
 
 type Response struct {
@@ -176,7 +195,7 @@ func (c *Client) Do(ctx context.Context, req Request, out any) (*Response, error
 	}
 
 	for attempt := 0; ; attempt++ {
-		res, err := c.send(ctx, req.Method, target, payload, idempotencyKey)
+		res, err := c.send(ctx, req.Method, target, payload, idempotencyKey, req.Header)
 		wait, retry := c.retryAfter(attempt, res, err)
 		if req.NoRetry {
 			retry = false
@@ -210,7 +229,7 @@ func (c *Client) Do(ctx context.Context, req Request, out any) (*Response, error
 	}
 }
 
-func (c *Client) send(ctx context.Context, method, target string, payload []byte, idempotencyKey string) (*Response, error) {
+func (c *Client) send(ctx context.Context, method, target string, payload []byte, idempotencyKey string, extra http.Header) (*Response, error) {
 	var body io.Reader
 	if payload != nil {
 		body = bytes.NewReader(payload)
@@ -219,8 +238,17 @@ func (c *Client) send(ctx context.Context, method, target string, payload []byte
 	if err != nil {
 		return nil, err
 	}
+	for k, v := range extra {
+		switch http.CanonicalHeaderKey(k) {
+		case "Authorization", "Idempotency-Key", "Content-Type":
+			continue
+		}
+		httpReq.Header[http.CanonicalHeaderKey(k)] = v
+	}
 	httpReq.Header.Set("Authorization", "Bearer "+c.Key)
-	httpReq.Header.Set("Accept", "application/json")
+	if httpReq.Header.Get("Accept") == "" {
+		httpReq.Header.Set("Accept", "application/json")
+	}
 	if c.UserAgent != "" {
 		httpReq.Header.Set("User-Agent", c.UserAgent)
 	}

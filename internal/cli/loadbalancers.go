@@ -49,6 +49,53 @@ func checkAlgorithm(algorithm string) error {
 	return fmt.Errorf("--algorithm %q: use roundrobin, leastconn or source", algorithm)
 }
 
+func checkTLSPolicy(policy string) error {
+	switch policy {
+	case "", "modern", "tls13":
+		return nil
+	}
+	return fmt.Errorf("--tls-policy %q: use modern or tls13", policy)
+}
+
+// tlsFlags are the HTTPS settings create and update share.
+type tlsFlags struct {
+	certificate, policy string
+	redirect            bool
+}
+
+func addTLSFlags(cmd *cobra.Command, t *tlsFlags) {
+	f := cmd.Flags()
+	f.StringVar(&t.certificate, "certificate", "", "https: the issued certificate to serve (cert_…, from pantech certificates)")
+	f.StringVar(&t.policy, "tls-policy", "", "https: modern (TLS 1.2 and 1.3, the default) or tls13 (TLS 1.3 only)")
+	f.BoolVar(&t.redirect, "redirect-http", false, "https: also answer port 80, redirecting to HTTPS (--redirect-http=false to stop)")
+}
+
+// apply adds the TLS flags that were given to body.
+func (t *tlsFlags) apply(cmd *cobra.Command, body map[string]any) bool {
+	fl, set := cmd.Flags(), false
+	if fl.Changed("certificate") {
+		body["certificate_id"], set = t.certificate, true
+	}
+	if fl.Changed("tls-policy") {
+		body["tls_policy"], set = t.policy, true
+	}
+	if fl.Changed("redirect-http") {
+		body["redirect_http"], set = t.redirect, true
+	}
+	return set
+}
+
+// lbError adds what to do to the API's HTTPS load balancer errors.
+func lbError(err error) error {
+	switch {
+	case api.HasFieldCode(err, "protocol", "LOAD_BALANCER_TLS_NOT_SUPPORTED"):
+		return fmt.Errorf("%w\nhttps is offered on appliance load balancers (a standard zone, --zone); a vpc_native one passes TLS through as tcp", err)
+	case api.HasFieldCode(err, "certificate_id", "CERTIFICATE_NOT_USABLE"):
+		return fmt.Errorf("%w\nWait until it is issued: pantech certificates get <certificate>", err)
+	}
+	return err
+}
+
 func newLoadBalancersCmd(a *app) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "load-balancers",
@@ -66,7 +113,11 @@ func newLoadBalancersCmd(a *app) *cobra.Command {
               billed as the VM it runs on.
 
 "pantech load-balancers create" picks the kind from the flags: --subnet means
-vpc_native, --zone without --subnet means appliance.`,
+vpc_native, --zone without --subnet means appliance.
+
+An appliance load balancer can also end HTTPS: --protocol https with
+--certificate, an issued certificate from "pantech certificates", which is
+renewed on it by itself. It then speaks plain HTTP to your VMs.`,
 	}
 	cmd.AddCommand(
 		newLoadBalancersListCmd(a),
@@ -99,6 +150,19 @@ func lbKind(l api.LoadBalancer) string {
 
 func lbListen(l api.LoadBalancer) string {
 	return fmt.Sprintf("%s:%d → %d", output.Or(l.PublicIPAddress), l.PublicPort, l.PrivatePort)
+}
+
+func lbListenPairs(l api.LoadBalancer, allowed string) []output.Pair {
+	pairs := []output.Pair{{"Listens", lbListen(l)}, {"Protocol", l.Protocol}, {"Algorithm", l.Algorithm}, {"Allowed from", allowed}}
+	if l.Protocol == "https" {
+		redirect := "no"
+		if l.RedirectHTTP {
+			redirect = "port 80 → HTTPS"
+		}
+		pairs = append(pairs, output.Pair{"Certificate", output.Or(l.CertificateID)}, output.Pair{"Serving", output.Or(l.CertificateFingerprintSHA256)},
+			output.Pair{"TLS policy", output.Or(l.TLSPolicy)}, output.Pair{"HTTP redirect", redirect})
+	}
+	return pairs
 }
 
 func newLoadBalancersListCmd(a *app) *cobra.Command {
@@ -188,7 +252,7 @@ func newLoadBalancersGetCmd(a *app) *cobra.Command {
 				State:    lbState(a, l),
 				Subtitle: l.ID,
 				Sections: [][]output.Pair{
-					{{"Listens", lbListen(l)}, {"Protocol", l.Protocol}, {"Algorithm", l.Algorithm}, {"Allowed from", allowed}},
+					lbListenPairs(l, allowed),
 					{{"Kind", lbKind(l)}, {"Zone", output.Or(&l.ZoneID)}, {"Public IP", output.Or(&l.PublicIPID)}, {"Subnet", output.Or(&l.SubnetID)}, {"Network", output.Or(l.NetworkID)}},
 					targets,
 					{{"Created", output.When(l.CreatedAt)}},
@@ -200,10 +264,11 @@ func newLoadBalancersGetCmd(a *app) *cobra.Command {
 }
 
 func newLoadBalancersCreateCmd(a *app) *cobra.Command {
-	var name, zone, lbKindFlag, publicIP, subnet, algorithm string
+	var name, zone, lbKindFlag, publicIP, subnet, algorithm, protocol string
 	var port, privatePort int
 	var allow, targets []string
 	var noWait bool
+	var tls tlsFlags
 	cmd := &cobra.Command{
 		Use:   "create",
 		Short: "Create a load balancer",
@@ -220,8 +285,15 @@ in the zone, and their security groups must allow the port from it.
 --kind is worked out from the flags when it is left out. --private-port
 defaults to --port and --algorithm to roundrobin; --allow limits which
 source addresses may connect (default: anywhere). Targets can be added
-later with "pantech load-balancers update --targets".`,
-		Example: `  # VPC zone
+later with "pantech load-balancers update --targets".
+
+--protocol https (appliance only) ends TLS on the load balancer with
+--certificate, an issued certificate; --tls-policy picks modern (default) or
+tls13, and --redirect-http also answers port 80 with a redirect to HTTPS.`,
+		Example: `  # HTTPS in a standard zone
+  pantech load-balancers create --name web --zone af-abj-1 --port 443 --private-port 8080 \
+    --protocol https --certificate cert_01JD… --redirect-http --target web-1,web-2
+  # VPC zone
   pantech load-balancers create --name web --public-ip 102.211.122.91 --subnet snet_1 \
     --port 443 --private-port 8443 --algorithm leastconn --target web-1,web-2
   # standard zone
@@ -233,6 +305,21 @@ later with "pantech load-balancers update --targets".`,
 			}
 			if err := checkLBKind(lbKindFlag); err != nil {
 				return &usageError{err, cmd}
+			}
+			if err := checkTLSPolicy(tls.policy); err != nil {
+				return &usageError{err, cmd}
+			}
+			switch protocol {
+			case "", "tcp":
+				if cmd.Flags().Changed("certificate") || cmd.Flags().Changed("tls-policy") || cmd.Flags().Changed("redirect-http") {
+					return &usageError{errors.New("--certificate, --tls-policy and --redirect-http go with --protocol https"), cmd}
+				}
+			case "https":
+				if tls.certificate == "" {
+					return &usageError{errors.New("--protocol https needs --certificate, an issued certificate (pantech certificates list)"), cmd}
+				}
+			default:
+				return &usageError{fmt.Errorf("--protocol %q: use tcp or https", protocol), cmd}
 			}
 			kind := lbKindFlag
 			if kind == "" {
@@ -248,6 +335,8 @@ later with "pantech load-balancers update --targets".`,
 				return &usageError{errors.New("an appliance load balancer needs --zone"), cmd}
 			case kind == "appliance" && (publicIP != "" || subnet != ""):
 				return &usageError{errors.New("an appliance load balancer has its own address: leave out --public-ip and --subnet"), cmd}
+			case kind == "vpc_native" && protocol == "https":
+				return &usageError{errors.New("https is offered on appliance load balancers only (--zone in a standard zone); a vpc_native one passes TLS through as tcp"), cmd}
 			}
 			c, err := a.client()
 			if err != nil {
@@ -267,6 +356,10 @@ later with "pantech load-balancers update --targets".`,
 			if algorithm != "" {
 				body["algorithm"] = algorithm
 			}
+			if protocol != "" {
+				body["protocol"] = protocol
+			}
+			tls.apply(cmd, body)
 			if privatePort != 0 {
 				body["private_port"] = privatePort
 			}
@@ -285,7 +378,7 @@ later with "pantech load-balancers update --targets".`,
 					return err
 				}
 			}
-			return a.runCreate(cmd, c, api.Request{Method: http.MethodPost, Path: "/load-balancers", Body: body}, noWait, "load balancer "+name)
+			return lbError(a.runCreate(cmd, c, api.Request{Method: http.MethodPost, Path: "/load-balancers", Body: body}, noWait, "load balancer "+name))
 		},
 	}
 	f := cmd.Flags()
@@ -300,6 +393,8 @@ later with "pantech load-balancers update --targets".`,
 	f.StringSliceVar(&allow, "allow", nil, "a source CIDR allowed to connect; repeat or comma-separate (default: anywhere)")
 	f.StringSliceVar(&targets, "target", nil, "a VM to send traffic to, by id or name; repeat or comma-separate")
 	f.BoolVar(&noWait, "no-wait", false, "return the id without waiting")
+	f.StringVar(&protocol, "protocol", "", "tcp (default) or https (appliance only; needs --certificate)")
+	addTLSFlags(cmd, &tls)
 	for _, req := range []string{"name", "port"} {
 		_ = cmd.MarkFlagRequired(req)
 	}
@@ -310,13 +405,17 @@ func newLoadBalancersUpdateCmd(a *app) *cobra.Command {
 	var name, algorithm string
 	var targets []string
 	var noTargets, noWait bool
+	var tls tlsFlags
 	cmd := &cobra.Command{
 		Use:   "update <load balancer>",
-		Short: "Rename a load balancer, change its algorithm or set its targets",
+		Short: "Rename a load balancer, change its algorithm, targets or HTTPS settings",
 		Long: `Rename a load balancer, change its algorithm, or replace its targets.
 --targets is the whole new set (for vpc_native, each in the load balancer's
 subnet; for appliance, each in its zone);
---no-targets removes them all. Flags left out stay as they are.`,
+--no-targets removes them all. On an https load balancer, --certificate
+serves another certificate, --tls-policy changes the policy and
+--redirect-http turns the port 80 redirect on or off. Flags left out stay as
+they are.`,
 		Example: `  pantech load-balancers update web --algorithm source
   pantech load-balancers update web --targets web-1,web-2,web-3`,
 		Args: cobra.ExactArgs(1),
@@ -328,8 +427,12 @@ subnet; for appliance, each in its zone);
 			if fl.Changed("targets") && noTargets {
 				return &usageError{errors.New("--targets and --no-targets do not go together"), cmd}
 			}
-			if !fl.Changed("name") && !fl.Changed("algorithm") && !fl.Changed("targets") && !noTargets {
-				return &usageError{errors.New("give at least one of --name, --algorithm, --targets or --no-targets"), cmd}
+			if err := checkTLSPolicy(tls.policy); err != nil {
+				return &usageError{err, cmd}
+			}
+			tlsChanged := fl.Changed("certificate") || fl.Changed("tls-policy") || fl.Changed("redirect-http")
+			if !fl.Changed("name") && !fl.Changed("algorithm") && !fl.Changed("targets") && !noTargets && !tlsChanged {
+				return &usageError{errors.New("give at least one of --name, --algorithm, --targets, --no-targets, --certificate, --tls-policy or --redirect-http"), cmd}
 			}
 			c, err := a.client()
 			if err != nil {
@@ -346,6 +449,7 @@ subnet; for appliance, each in its zone);
 			if fl.Changed("algorithm") {
 				body["algorithm"] = algorithm
 			}
+			tls.apply(cmd, body)
 			switch {
 			case noTargets:
 				if err := a.confirm(fmt.Sprintf("Remove every target from %s? It stops sending traffic anywhere.", args[0])); err != nil {
@@ -360,7 +464,7 @@ subnet; for appliance, each in its zone);
 				body["instance_ids"] = ids
 			}
 			req := api.Request{Method: http.MethodPatch, Path: "/load-balancers/" + url.PathEscape(id), Body: body}
-			return a.runWrite(cmd, c, req, noWait, verb{"Updating", "Updated"}, args[0])
+			return lbError(a.runWrite(cmd, c, req, noWait, verb{"Updating", "Updated"}, args[0]))
 		},
 	}
 	f := cmd.Flags()
@@ -369,5 +473,6 @@ subnet; for appliance, each in its zone);
 	f.StringSliceVar(&targets, "targets", nil, "the whole new set of target VMs, by id or name, comma-separated or repeated")
 	f.BoolVar(&noTargets, "no-targets", false, "remove every target")
 	f.BoolVar(&noWait, "no-wait", false, "return the operation id without waiting")
+	addTLSFlags(cmd, &tls)
 	return cmd
 }

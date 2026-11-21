@@ -9,6 +9,15 @@ release workflow refuses a tag that has no section here.
 
 ## Unreleased
 
+### Added
+
+- Object storage (closed beta): `pantech object-storage [status]` (alias `s3`)
+  shows whether it is on and the S3 endpoint; `pantech buckets list | get |
+  create | delete` (`create` takes `--quota`, `--versioning`, `--object-lock`
+  and asks first since storage is billed; `delete --force` deletes the objects
+  too); `pantech object-storage keys list | create | revoke` (`create` prints
+  the secret once; `--read-only`, `--bucket`).
+
 ## v0.8.0 — 2026-11-10
 
 ### Added

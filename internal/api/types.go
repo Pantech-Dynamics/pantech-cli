@@ -289,3 +289,40 @@ func (e *OperationFailed) Error() string {
 	}
 	return fmt.Sprintf("%s failed (operation %s)", e.Op.Kind, e.Op.ID)
 }
+
+// ObjectStorageStatus says whether object storage is on for the
+// organization (a closed beta) and where its S3 endpoint is.
+type ObjectStorageStatus struct {
+	Enabled  bool   `json:"enabled"`
+	Endpoint string `json:"endpoint"`
+	Beta     bool   `json:"beta"`
+}
+
+// Bucket is an object storage bucket. QuotaBytes 0 is no limit.
+type Bucket struct {
+	ID             string   `json:"id"`
+	Name           string   `json:"name"`
+	Region         string   `json:"region"`
+	Endpoint       string   `json:"endpoint"`
+	QuotaBytes     int64    `json:"quota_bytes"`
+	Versioning     bool     `json:"versioning"`
+	ObjectLock     bool     `json:"object_lock"`
+	PublicPrefixes []string `json:"public_prefixes"`
+	State          string   `json:"state"`
+	CreatedAt      string   `json:"created_at"`
+	OperationID    string   `json:"operation_id,omitempty"`
+}
+
+// ObjectStorageKey is an S3 access key. SecretAccessKey and Endpoint are
+// set only in the answer to its create.
+type ObjectStorageKey struct {
+	ID              string   `json:"id"`
+	Name            string   `json:"name"`
+	Region          string   `json:"region"`
+	AccessKeyID     string   `json:"access_key_id"`
+	ReadOnly        bool     `json:"read_only"`
+	Buckets         []string `json:"buckets"`
+	CreatedAt       string   `json:"created_at"`
+	SecretAccessKey string   `json:"secret_access_key,omitempty"`
+	Endpoint        string   `json:"endpoint,omitempty"`
+}

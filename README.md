@@ -3,6 +3,7 @@
 The Pantech Dynamics CLI: virtual machines, managed databases, managed
 Kubernetes, volumes, snapshots, networks, public IPs, load balancers, security
 groups, SSH keys, webhooks, DNS zones and domains, a private container registry,
+object storage (beta),
 teams and access policies, TLS certificates, migrations from AWS and the catalogue from your terminal, through the [public API](https://docs.pantechdynamics.com/api).
 
 ```sh
@@ -74,6 +75,8 @@ pantech registry namespace [get | set <name>] | login                (alias: cr)
 pantech registry repos list | create | get | update | delete
 pantech registry tags list | get | delete
 pantech registry tokens list | create | revoke
+pantech object-storage [status] | keys list | create | revoke       (alias: s3)
+pantech buckets list | get | create | delete
 pantech iam actions | members [--q] | settings [get | set] | access <member> | simulate
 pantech iam teams list | create | get | update | delete | members <team> [add | remove <member>]
 pantech iam policies list | create | get | update | delete | attachments | attach | detach
@@ -341,6 +344,25 @@ Registry tokens log in to the registry only, never to the API: `pull`, or `push`
 alone on stdout. `repos delete`, `tags delete`, `tokens revoke` and making a
 repository public ask first (`--yes` to skip). A retention flag of `0` (or
 `--keep-pattern ""`) removes that rule, and `--no-retention` removes them all.
+
+### Object storage (beta)
+
+S3-compatible buckets, in closed beta: `pantech object-storage` says whether it
+is on for your organization and prints the S3 endpoint. Buckets are named by id
+(`bkt_…`) or by name; names are shared by everyone.
+
+```sh
+pantech buckets create my-app-uploads [--quota 100] [--versioning]
+pantech object-storage keys create --name app [--read-only] [--bucket my-app-uploads]
+aws s3 ls s3://my-app-uploads --endpoint-url https://s3.af-abj.pantechdynamics.com
+pantech buckets delete my-app-uploads [--force]      # --force deletes its objects too
+pantech object-storage keys revoke osk_…
+```
+
+Storage is billed at 500 naira per GiB a month, measured hourly; data out and
+requests are free during the beta. `buckets create` asks first because it costs
+money, and `buckets delete` and `keys revoke` ask too (`--yes` to skip).
+`keys create` prints the secret once and never again.
 
 ### Teams and access policies
 

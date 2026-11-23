@@ -537,8 +537,8 @@ address for 15 minutes, waits for that, and connects to the host the grant
 names. The port closes again after 15 minutes; --revoke closes it as soon
 as your session ends.
 
-The user is the image's usual cloud user (ubuntu, debian, rocky; root
-otherwise); --user changes it. Anything after -- goes to ssh.`,
+The user is the image's usual cloud user (ubuntu, debian, rocky, opensuse,
+cloud-user on CentOS; root otherwise); --user changes it. Anything after -- goes to ssh.`,
 		Example: `  pantech vm ssh web-1
   pantech vm ssh web-1 --revoke
   pantech vm ssh web-1 -- -i ~/.ssh/deploy -L 8080:localhost:80`,
@@ -702,10 +702,14 @@ func defaultUser(image *string) string {
 	if image == nil {
 		return "root"
 	}
-	for _, distro := range []string{"ubuntu", "debian", "rocky", "almalinux", "fedora"} {
+	for _, distro := range []string{"ubuntu", "debian", "rocky", "almalinux", "fedora", "opensuse"} {
 		if strings.HasPrefix(*image, distro) {
 			return distro
 		}
+	}
+	// CentOS Stream's cloud images log in as cloud-user, and refuse root.
+	if strings.HasPrefix(*image, "centos") {
+		return "cloud-user"
 	}
 	return "root"
 }

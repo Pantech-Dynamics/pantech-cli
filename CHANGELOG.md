@@ -9,6 +9,12 @@ release workflow refuses a tag that has no section here.
 
 ## Unreleased
 
+### Changed
+
+- `domains register` and `domains transfer` name the Domain Registration Agreement and
+  link it (https://pantechdynamics.com/legal/domain-registration) in the `--accept-terms` help and in the error
+  when the flag is missing.
+
 ### Fixed
 
 - `pantech vm ssh` logs in as `cloud-user` on CentOS Stream and `opensuse` on

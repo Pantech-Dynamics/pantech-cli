@@ -13,6 +13,9 @@ release workflow refuses a tag that has no section here.
 
 - `pantech vm ssh` logs in as `cloud-user` on CentOS Stream and `opensuse` on
   openSUSE. It used `root`, which those images refuse.
+- `pantech kubernetes create` and `pantech kubernetes node-pools create`
+  examples use a real node plan, `developer` (2 vCPU, 4 GB). They showed
+  `s-2vcpu-4gb`, which is not a Pantech plan; `pantech plans` lists them.
 
 ### Added
 

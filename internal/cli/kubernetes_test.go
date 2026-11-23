@@ -75,12 +75,12 @@ func TestKubernetesCreate(t *testing.T) {
 		{
 			name: "fixed workers, version by number",
 			args: []string{"--version", "1.31.2", "--workers", "2"},
-			want: map[string]any{"name": "prod", "zone_id": "af-abj-2", "node_plan": "s-2vcpu-4gb", "kubernetes_version_id": "k8sv_1", "subnet_id": "snet_1", "workers": float64(2)},
+			want: map[string]any{"name": "prod", "zone_id": "af-abj-2", "node_plan": "developer", "kubernetes_version_id": "k8sv_1", "subnet_id": "snet_1", "workers": float64(2)},
 		},
 		{
 			name: "autoscaled, HA, API allow-list, version by id",
 			args: []string{"--version", "k8sv_2", "--autoscale", "2:5", "--control-nodes", "3", "--api-allow", "203.0.113.0/24", "--api-allow", "198.51.100.7/32"},
-			want: map[string]any{"name": "prod", "zone_id": "af-abj-2", "node_plan": "s-2vcpu-4gb", "kubernetes_version_id": "k8sv_2", "subnet_id": "snet_1", "control_nodes": float64(3),
+			want: map[string]any{"name": "prod", "zone_id": "af-abj-2", "node_plan": "developer", "kubernetes_version_id": "k8sv_2", "subnet_id": "snet_1", "control_nodes": float64(3),
 				"autoscaling":       map[string]any{"enabled": true, "min_workers": float64(2), "max_workers": float64(5)},
 				"api_allowed_cidrs": []any{"203.0.113.0/24", "198.51.100.7/32"}},
 		},
@@ -90,7 +90,7 @@ func TestKubernetesCreate(t *testing.T) {
 			f.on("GET /kubernetes-versions", 200, k8sVersionsBody).
 				on("POST /kubernetes-clusters", 202, k8sAccepted).
 				on("GET /operations/op_1", 200, opDone)
-			args := append([]string{"k8s", "create", "--name", "prod", "--zone", "af-abj-2", "--subnet", "snet_1", "--node-plan", "s-2vcpu-4gb", "--yes"}, c.args...)
+			args := append([]string{"k8s", "create", "--name", "prod", "--zone", "af-abj-2", "--subnet", "snet_1", "--node-plan", "developer", "--yes"}, c.args...)
 			r := run(t, srv, "", args...)
 			if r.err != nil || r.stdout != "k8s_1\n" {
 				t.Fatalf("stdout %q err %v", r.stdout, r.err)
@@ -105,7 +105,7 @@ func TestKubernetesCreate(t *testing.T) {
 func TestKubernetesCreateRefusedBeforeSending(t *testing.T) {
 	f, srv := newFakeAPI(t)
 	f.on("GET /kubernetes-versions", 200, k8sVersionsBody).on("POST /kubernetes-clusters", 202, k8sAccepted)
-	base := []string{"k8s", "create", "--name", "prod", "--zone", "af-abj-2", "--node-plan", "s-2vcpu-4gb", "--yes"}
+	base := []string{"k8s", "create", "--name", "prod", "--zone", "af-abj-2", "--node-plan", "developer", "--yes"}
 	for _, c := range []struct {
 		args    []string
 		usage   bool

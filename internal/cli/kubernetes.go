@@ -290,9 +290,9 @@ change them only when they overlap a network your pods must reach.
 
 --version is a version such as 1.31.2, or its id, offered in --zone.`,
 		Example: `  pantech kubernetes create --name prod --zone af-abj-2 --version 1.31.2 \
-    --subnet snet_1 --node-plan s-2vcpu-4gb --workers 2
+    --subnet snet_1 --node-plan developer --workers 2
   pantech kubernetes create --name prod --zone af-abj-2 --version 1.31.2 \
-    --subnet snet_1 --node-plan s-2vcpu-4gb --control-nodes 3 --autoscale 2:5 \
+    --subnet snet_1 --node-plan developer --control-nodes 3 --autoscale 2:5 \
     --api-allow 203.0.113.0/24`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {

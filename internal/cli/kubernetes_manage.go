@@ -286,7 +286,7 @@ func newNodePoolsCreateCmd(a *app) *cobra.Command {
 of the pool.`,
 		Example: `  pantech kubernetes node-pools create prod --name db --node-plan s-4vcpu-8gb --workers 2 \
     --label role=db --taint dedicated=db:NoSchedule
-  pantech kubernetes node-pools create prod --name burst --node-plan s-2vcpu-4gb --autoscale 1:5`,
+  pantech kubernetes node-pools create prod --name burst --node-plan developer --autoscale 1:5`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			fl := cmd.Flags()

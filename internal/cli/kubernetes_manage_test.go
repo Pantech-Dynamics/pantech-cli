@@ -12,7 +12,7 @@ const k8sPoolsBody = `{"data":[{"id":"k8spool_1","cluster_id":"k8s_1","name":"db
 func TestKubernetesCreateNetworkFlags(t *testing.T) {
 	f, srv := newFakeAPI(t)
 	f.on("POST /kubernetes-clusters", 202, k8sAccepted)
-	r := run(t, srv, "", "k8s", "create", "--name", "prod", "--zone", "af-abj-1", "--version", "k8sv_1", "--node-plan", "s-2vcpu-4gb", "--workers", "2",
+	r := run(t, srv, "", "k8s", "create", "--name", "prod", "--zone", "af-abj-1", "--version", "k8sv_1", "--node-plan", "developer", "--workers", "2",
 		"--cni", "calico", "--pod-cidr", "10.60.0.0/16", "--service-cidr", "10.61.0.0/16", "--yes", "--no-wait")
 	if r.err != nil {
 		t.Fatal(r.err)

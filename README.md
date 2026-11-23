@@ -303,7 +303,8 @@ fails `insufficient_credit` and nothing is charged.
 `last_name`, `organization_name` for a company, `email`, `phone` as
 `+CC.NUMBER`, `address_line1`, `city`, `state`, `country_code`, `postal_code`);
 it is sent to the API and never printed, and only `domains contact` shows it,
-to owners and admins. `--accept-terms` accepts the registrant agreement.
+to owners and admins. `--accept-terms` accepts the
+[Domain Registration Agreement](https://pantechdynamics.com/legal/domain-registration).
 Privacy protection, auto-renew and the transfer lock are on by default
 (`--no-privacy`, `--auto-renew=false`; `domains set --lock=off` before moving away).
 The .ng registry hides every registrant's contact details, so privacy is always

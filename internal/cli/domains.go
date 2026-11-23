@@ -456,7 +456,7 @@ type orderFlags struct {
 	authCodeStdin        bool
 }
 
-const termsText = "the registrant agreement and the registrant rights and responsibilities"
+const termsText = "the Domain Registration Agreement (https://pantechdynamics.com/legal/domain-registration), including the registrant rights and responsibilities"
 
 func (o *orderFlags) check(cmd *cobra.Command) error {
 	if o.years < 1 || o.years > 10 {

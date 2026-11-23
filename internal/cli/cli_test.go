@@ -26,11 +26,13 @@ func TestMoney(t *testing.T) {
 func TestDefaultUser(t *testing.T) {
 	s := func(v string) *string { return &v }
 	for image, want := range map[*string]string{
-		s("ubuntu-24-04"): "ubuntu",
-		s("debian-12"):    "debian",
-		s("rocky-9"):      "rocky",
-		s("windows-2022"): "root",
-		nil:               "root",
+		s("ubuntu-24-04"):    "ubuntu",
+		s("debian-12"):       "debian",
+		s("rocky-9"):         "rocky",
+		s("centos-stream-9"): "cloud-user",
+		s("opensuse-15-5"):   "opensuse",
+		s("windows-2022"):    "root",
+		nil:                  "root",
 	} {
 		if got := defaultUser(image); got != want {
 			t.Errorf("defaultUser(%v) = %q, want %q", image, got, want)

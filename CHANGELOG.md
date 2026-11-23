@@ -9,6 +9,11 @@ release workflow refuses a tag that has no section here.
 
 ## Unreleased
 
+### Fixed
+
+- `pantech vm ssh` logs in as `cloud-user` on CentOS Stream and `opensuse` on
+  openSUSE. It used `root`, which those images refuse.
+
 ### Added
 
 - Object storage (closed beta): `pantech object-storage [status]` (alias `s3`)

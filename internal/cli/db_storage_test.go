@@ -350,3 +350,31 @@ func TestDBCreateRefusesAReservedAdminUsername(t *testing.T) {
 		t.Fatal("sent anyway")
 	}
 }
+
+func TestDBSnapshotSchedule(t *testing.T) {
+	const body = `{"database_id":"db_1","frequency":"daily","retention_count":14,"enabled":true,"next_run_at":"2026-11-10T02:00:00Z"}`
+	f, srv := newFakeAPI(t)
+	f.on("GET /databases", 200, `{"data":[`+dbBody+`],"next_cursor":null}`).
+		on("GET /databases/db_1/snapshot-schedule", 200, body).
+		on("PUT /databases/db_1/snapshot-schedule", 200, body)
+
+	if r := run(t, srv, "", "db", "snapshots", "schedule", "get", "db_1"); r.err != nil || !strings.Contains(r.stdout, "daily") {
+		t.Fatalf("get: %v\n%s", r.err, r.stdout)
+	}
+	if r := run(t, srv, "", "db", "snapshots", "schedule", "set", "db_1", "--frequency", "daily", "--keep", "14"); r.err == nil || len(f.sent("PUT", "/databases/db_1/snapshot-schedule")) != 0 {
+		t.Fatalf("set without --yes must refuse and send nothing: %v", r.err)
+	}
+	if r := run(t, srv, "", "db", "snapshots", "schedule", "set", "db_1", "--frequency", "daily", "--keep", "14", "--yes"); r.err != nil {
+		t.Fatalf("set: %v", r.err)
+	}
+	got := f.sentJSON("PUT", "/databases/db_1/snapshot-schedule")
+	if got["frequency"] != "daily" || got["retention_count"] != float64(14) || got["enabled"] != true {
+		t.Fatalf("sent %+v", got)
+	}
+	if r := run(t, srv, "", "db", "snapshots", "schedule", "set", "db_1", "--frequency", "hourly", "--yes"); r.err == nil {
+		t.Fatal("an unknown frequency was accepted")
+	}
+	if r := run(t, srv, "", "db", "snapshots", "schedule", "set", "db_1", "--frequency", "daily", "--keep", "0", "--yes"); r.err == nil {
+		t.Fatal("--keep 0 was accepted")
+	}
+}

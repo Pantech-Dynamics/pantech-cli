@@ -552,3 +552,12 @@ func (e *DynamicIPFailed) Error() string {
 	}
 	return "dynamic IP failed"
 }
+
+// SnapshotSchedule is the automatic snapshot setting of a database.
+type SnapshotSchedule struct {
+	DatabaseID     *string `json:"database_id"`
+	Frequency      string  `json:"frequency"`
+	RetentionCount int     `json:"retention_count"`
+	Enabled        bool    `json:"enabled"`
+	NextRunAt      *string `json:"next_run_at"`
+}

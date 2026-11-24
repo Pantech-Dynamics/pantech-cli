@@ -36,6 +36,7 @@ func newVMCmd(a *app) *cobra.Command {
 		newVMSSHCmd(a),
 		newVMChangeSSHKeyCmd(a),
 		newVMPrivateNetworkCmd(a),
+		newVMDynamicIPCmd(a),
 		newOrdersCmd(a, "/instance-orders", "VM"),
 	)
 	return cmd
@@ -215,6 +216,7 @@ func memory(mb int) string {
 
 func newVMCreateCmd(a *app) *cobra.Command {
 	var name, plan, image, sshKey, region, subnet, securityGroup string
+	var dynamicIP, dynamicIPConnections string
 	var tags map[string]string
 	var noWait, encrypted bool
 	cmd := &cobra.Command{
@@ -229,15 +231,41 @@ Find plans with "pantech plans", images with "pantech images" and your keys with
 
 --encrypted picks the encrypted variant of --image: the VM's disk, its snapshots
 and backups are encrypted at rest, each VM with its own key. Encrypted VMs are
-enabled per organization on request.`,
+enabled per organization on request.
+
+--dynamic-ip turns on scheduled outbound IPv4 rotation from launch
+(every_12_hours +60%, daily +50%, weekly +40%, monthly +30%). It applies to
+standard VMs only and requires --security-group pointing at a group that allows
+nothing from the private network's range.`,
 		Example: `  pantech vm create --name web-1 --plan starter --image ubuntu-24-04 --ssh-key deploy
-  pantech vm create --name vault-1 --plan starter --image ubuntu-24-04 --encrypted --ssh-key deploy`,
+  pantech vm create --name vault-1 --plan starter --image ubuntu-24-04 --encrypted --ssh-key deploy
+  pantech vm create --name edge-1 --plan starter --image ubuntu-24-04 --ssh-key deploy --security-group locked --dynamic-ip weekly`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			// Images have no password login, so the platform refuses a VM
 			// without a key; say so before anything is sent or paid.
 			if strings.TrimSpace(sshKey) == "" {
 				return &usageError{errors.New(`--ssh-key is required: images have no password login, so it is how you log in (see "pantech ssh-keys list")`), cmd}
+			}
+			if cmd.Flags().Changed("dynamic-ip-connections") && dynamicIP == "" {
+				return &usageError{errors.New("--dynamic-ip-connections requires --dynamic-ip"), cmd}
+			}
+			var dynamicIPSurcharge int
+			if dynamicIP != "" {
+				pct, ok := validDynamicIPSchedule(dynamicIP)
+				if !ok {
+					return &usageError{fmt.Errorf("--dynamic-ip must be one of every_12_hours, daily, weekly, monthly (got %q)", dynamicIP), cmd}
+				}
+				if !validDynamicIPConnections(dynamicIPConnections) {
+					return &usageError{fmt.Errorf("--dynamic-ip-connections must be keep or move (got %q)", dynamicIPConnections), cmd}
+				}
+				if subnet != "" {
+					return errors.New("--dynamic-ip is for a standard VM and cannot be used with --subnet")
+				}
+				if strings.TrimSpace(securityGroup) == "" {
+					return errors.New("--dynamic-ip requires --security-group: choose a security group that allows nothing from the private network's range")
+				}
+				dynamicIPSurcharge = pct
 			}
 			c, err := a.client()
 			if err != nil {
@@ -278,12 +306,24 @@ enabled per organization on request.`,
 				}
 				body["security_group_id"] = id
 			}
+			if dynamicIP != "" {
+				body["address_rotation"] = map[string]any{
+					"schedule":    dynamicIP,
+					"connections": dynamicIPConnections,
+				}
+			}
 			if len(tags) > 0 {
 				body["tags"] = tags
 			}
 
 			question := fmt.Sprintf("Create %s (%s, %s)?", name, plan, image)
-			if price := planPrice(cmd, c, plan, placement); price != "" {
+			price := planPrice(cmd, c, plan, placement)
+			switch {
+			case dynamicIP != "" && price != "":
+				question = fmt.Sprintf("Create %s (%s, %s) for about %s a month plus +%d%% for dynamic IP (%s)?", name, plan, image, price, dynamicIPSurcharge, dynamicIP)
+			case dynamicIP != "":
+				question = fmt.Sprintf("Create %s (%s, %s) with dynamic IP (%s, +%d%% surcharge)?", name, plan, image, dynamicIP, dynamicIPSurcharge)
+			case price != "":
 				question = fmt.Sprintf("Create %s (%s, %s) for about %s a month?", name, plan, image, price)
 			}
 			if err := a.confirm(question); err != nil {
@@ -299,11 +339,15 @@ enabled per organization on request.`,
 			}
 			res, err := c.Do(ctx(cmd), api.Request{Method: http.MethodPost, Path: "/instances", Body: body}, &accepted)
 			if err != nil {
-				return api.AsFlags(err, map[string]string{
+				err = api.AsFlags(err, map[string]string{
 					"name": "--name", "plan_slug": "--plan", "image_slug": "--image", "ssh_key_id": "--ssh-key",
 					"region": "--region", "subnet_id": "--subnet", "network_id": "--subnet",
 					"security_group_id": "--security-group", "tags": "--tags",
+					"address_rotation":             "--dynamic-ip",
+					"address_rotation.schedule":    "--dynamic-ip",
+					"address_rotation.connections": "--dynamic-ip-connections",
 				})
+				return dynamicIPError(cmd, c, "", name, err)
 			}
 			if noWait {
 				switch {
@@ -356,6 +400,9 @@ enabled per organization on request.`,
 					a.out.Line("%s is ready", a.out.Bold(vm.Name))
 					a.out.Next("Details", "pantech vm get "+vm.Name)
 				}
+				if dynamicIP != "" {
+					a.out.Next("Dynamic IP", "pantech vm dynamic-ip get "+vm.Name)
+				}
 			}
 			return nil
 		},
@@ -368,6 +415,8 @@ enabled per organization on request.`,
 	f.StringVar(&region, "region", "", "region code (default: the platform's region)")
 	f.StringVar(&subnet, "subnet", "", "VPC subnet, by id or name, for a VM without its own public IPv4")
 	f.StringVar(&securityGroup, "security-group", "", "security group, by id or name, for a standard VM (default: your default group)")
+	f.StringVar(&dynamicIP, "dynamic-ip", "", "enable dynamic IP on launch: every_12_hours (+60%), daily (+50%), weekly (+40%), monthly (+30%)")
+	f.StringVar(&dynamicIPConnections, "dynamic-ip-connections", "keep", "how dynamic IP handles open outbound connections on rotation: keep or move")
 	f.StringToStringVar(&tags, "tags", nil, "tags as key=value pairs, e.g. --tags env=prod,team=web")
 	f.BoolVar(&encrypted, "encrypted", false, "use the encrypted variant of --image (disk encrypted at rest)")
 	f.BoolVar(&noWait, "no-wait", false, "return once ordered, without waiting for it to provision")

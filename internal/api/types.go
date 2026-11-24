@@ -290,12 +290,21 @@ func (e *OperationFailed) Error() string {
 	return fmt.Sprintf("%s failed (operation %s)", e.Op.Kind, e.Op.ID)
 }
 
+// ObjectStorageLimits holds organization-level object storage limits.
+type ObjectStorageLimits struct {
+	MaxBuckets      int   `json:"max_buckets"`
+	MaxStorageBytes int64 `json:"max_storage_bytes"`
+	MaxObjects      int64 `json:"max_objects"`
+}
+
 // ObjectStorageStatus says whether object storage is on for the
 // organization (a closed beta) and where its S3 endpoint is.
 type ObjectStorageStatus struct {
-	Enabled  bool   `json:"enabled"`
-	Endpoint string `json:"endpoint"`
-	Beta     bool   `json:"beta"`
+	Enabled             bool                 `json:"enabled"`
+	Endpoint            string               `json:"endpoint"`
+	Beta                bool                 `json:"beta"`
+	DirectUploadEnabled bool                 `json:"direct_upload_enabled"`
+	Limits              *ObjectStorageLimits `json:"limits"`
 }
 
 // Bucket is an object storage bucket. QuotaBytes 0 is no limit.
@@ -305,6 +314,8 @@ type Bucket struct {
 	Region         string   `json:"region"`
 	Endpoint       string   `json:"endpoint"`
 	QuotaBytes     int64    `json:"quota_bytes"`
+	SizeBytes      int64    `json:"size_bytes"`
+	ObjectCount    int64    `json:"object_count"`
 	Versioning     bool     `json:"versioning"`
 	ObjectLock     bool     `json:"object_lock"`
 	PublicPrefixes []string `json:"public_prefixes"`
@@ -325,4 +336,219 @@ type ObjectStorageKey struct {
 	CreatedAt       string   `json:"created_at"`
 	SecretAccessKey string   `json:"secret_access_key,omitempty"`
 	Endpoint        string   `json:"endpoint,omitempty"`
+}
+
+// ObjectStorageHourUsage is one hour of object storage transfer and request counts.
+type ObjectStorageHourUsage struct {
+	Hour          string `json:"hour"`
+	BytesSent     int64  `json:"bytes_sent"`
+	BytesReceived int64  `json:"bytes_received"`
+	ReadOps       int64  `json:"read_ops"`
+	WriteOps      int64  `json:"write_ops"`
+}
+
+// ObjectStorageUsage summarizes transfer and request counts over a time range.
+type ObjectStorageUsage struct {
+	Range              string                   `json:"range"`
+	TotalBytesSent     int64                    `json:"total_bytes_sent"`
+	TotalBytesReceived int64                    `json:"total_bytes_received"`
+	TotalReadOps       int64                    `json:"total_read_ops"`
+	TotalWriteOps      int64                    `json:"total_write_ops"`
+	Hours              []ObjectStorageHourUsage `json:"hours"`
+}
+
+// BucketStats holds live stored bytes and object count for a bucket.
+type BucketStats struct {
+	SizeBytes   int64 `json:"size_bytes"`
+	ObjectCount int64 `json:"object_count"`
+}
+
+// EmptyBucketResult summarizes emptying a bucket.
+type EmptyBucketResult struct {
+	DeletedCount     int      `json:"deleted_count"`
+	AbortedUploads   int      `json:"aborted_uploads"`
+	LockedCount      int      `json:"locked_count"`
+	SampleLockedKeys []string `json:"sample_locked_keys"`
+}
+
+// StorageTag is a key-value tag on a bucket or object.
+type StorageTag struct {
+	Key   string `json:"key"`
+	Value string `json:"value"`
+}
+
+// BucketObject summarizes one object in a bucket.
+type BucketObject struct {
+	Key          string `json:"key"`
+	SizeBytes    int64  `json:"size_bytes"`
+	ETag         string `json:"etag"`
+	ContentType  string `json:"content_type"`
+	LastModified string `json:"last_modified"`
+	StorageClass string `json:"storage_class"`
+	VersionID    string `json:"version_id"`
+	IsLatest     bool   `json:"is_latest"`
+	Public       bool   `json:"public"`
+	ObjectPublic bool   `json:"object_public"`
+	PublicSource string `json:"public_source"`
+	PublicURL    string `json:"public_url"`
+}
+
+// BucketObjectVersion is one version or delete marker of an object.
+type BucketObjectVersion struct {
+	Key            string `json:"key"`
+	VersionID      string `json:"version_id"`
+	IsLatest       bool   `json:"is_latest"`
+	IsDeleteMarker bool   `json:"is_delete_marker"`
+	SizeBytes      int64  `json:"size_bytes"`
+	ETag           string `json:"etag"`
+	LastModified   string `json:"last_modified"`
+	StorageClass   string `json:"storage_class"`
+}
+
+// BucketObjectList is a page of folders and objects, or object versions.
+type BucketObjectList struct {
+	Prefix              string                `json:"prefix"`
+	Folders             []string              `json:"folders"`
+	Objects             []BucketObject        `json:"objects"`
+	NextCursor          string                `json:"next_cursor"`
+	Versions            []BucketObjectVersion `json:"versions"`
+	NextKeyMarker       string                `json:"next_key_marker"`
+	NextVersionIDMarker string                `json:"next_version_id_marker"`
+	IsTruncated         bool                  `json:"is_truncated"`
+}
+
+// BucketObjectMeta holds full properties, metadata, tags, lock and visibility for one object.
+type BucketObjectMeta struct {
+	Key                string            `json:"key"`
+	SizeBytes          int64             `json:"size_bytes"`
+	ETag               string            `json:"etag"`
+	ContentType        string            `json:"content_type"`
+	CacheControl       string            `json:"cache_control"`
+	ContentDisposition string            `json:"content_disposition"`
+	LastModified       string            `json:"last_modified"`
+	StorageClass       string            `json:"storage_class"`
+	VersionID          string            `json:"version_id"`
+	Metadata           map[string]string `json:"metadata"`
+	Tags               []StorageTag      `json:"tags"`
+	RetentionMode      string            `json:"retention_mode"`
+	RetainUntil        *string           `json:"retain_until"`
+	LegalHold          bool              `json:"legal_hold"`
+	Public             bool              `json:"public"`
+	ObjectPublic       bool              `json:"object_public"`
+	PublicSource       string            `json:"public_source"`
+	PublicURL          string            `json:"public_url"`
+}
+
+// PresignedURL is a short-lived direct download or upload URL.
+type PresignedURL struct {
+	Direct           bool   `json:"direct"`
+	URL              string `json:"url"`
+	ExpiresInSeconds int    `json:"expires_in_seconds"`
+}
+
+// ObjectVisibility describes an object's public or private read state.
+type ObjectVisibility struct {
+	Key          string `json:"key"`
+	Public       bool   `json:"public"`
+	ObjectPublic bool   `json:"object_public"`
+	PublicSource string `json:"public_source"`
+	PublicURL    string `json:"public_url"`
+}
+
+// DeleteObjectFailure reports one object that could not be deleted.
+type DeleteObjectFailure struct {
+	Key       string `json:"key"`
+	VersionID string `json:"version_id"`
+	Code      string `json:"code"`
+	Locked    bool   `json:"locked"`
+}
+
+// DeleteObjectsResult summarizes a batch or prefix object deletion.
+type DeleteObjectsResult struct {
+	Deleted int                   `json:"deleted"`
+	Failed  []DeleteObjectFailure `json:"failed"`
+}
+
+// BucketCORSRule is one cross-origin resource sharing rule on a bucket.
+type BucketCORSRule struct {
+	ID             string   `json:"id"`
+	AllowedOrigins []string `json:"allowed_origins"`
+	AllowedMethods []string `json:"allowed_methods"`
+	AllowedHeaders []string `json:"allowed_headers"`
+	ExposeHeaders  []string `json:"expose_headers"`
+	MaxAgeSeconds  int      `json:"max_age_seconds"`
+}
+
+// BucketLifecycleRule is one object expiration or cleanup rule on a bucket.
+type BucketLifecycleRule struct {
+	ID                           string `json:"id"`
+	Prefix                       string `json:"prefix"`
+	Enabled                      bool   `json:"enabled"`
+	ExpirationDays               int    `json:"expiration_days"`
+	NoncurrentExpirationDays     int    `json:"noncurrent_expiration_days"`
+	AbortIncompleteMultipartDays int    `json:"abort_incomplete_multipart_days"`
+	ExpiredObjectDeleteMarker    bool   `json:"expired_object_delete_marker"`
+}
+
+// BucketObjectLockConfig holds default object-lock retention settings on a bucket.
+type BucketObjectLockConfig struct {
+	Enabled bool   `json:"enabled"`
+	Mode    string `json:"mode"`
+	Days    int    `json:"days"`
+	Years   int    `json:"years"`
+}
+
+// MultipartStart describes an active multipart upload session.
+type MultipartStart struct {
+	UploadID      string `json:"upload_id"`
+	Mode          string `json:"mode"`
+	PartSizeBytes int64  `json:"part_size_bytes"`
+}
+
+// MultipartPart identifies one uploaded part of a multipart upload.
+type MultipartPart struct {
+	PartNumber int    `json:"part_number"`
+	ETag       string `json:"etag"`
+}
+
+// DynamicIPEvent is one change in a VM's dynamic IP history.
+type DynamicIPEvent struct {
+	Kind        string  `json:"kind"`
+	FromAddress *string `json:"from_address"`
+	ToAddress   *string `json:"to_address"`
+	Degraded    bool    `json:"degraded"`
+	OccurredAt  string  `json:"occurred_at"`
+}
+
+// DynamicIP is a VM's scheduled outbound IPv4 rotation configuration and state.
+type DynamicIP struct {
+	InstanceID       string           `json:"instance_id"`
+	Schedule         string           `json:"schedule"`
+	Connections      string           `json:"connections"`
+	OnDemand         bool             `json:"on_demand"`
+	State            string           `json:"state"`
+	CurrentAddress   *string          `json:"current_address"`
+	NextRotationAt   *string          `json:"next_rotation_at"`
+	LastRotatedAt    *string          `json:"last_rotated_at"`
+	SurchargePercent float64          `json:"surcharge_percent"`
+	OnDemandUsed     int              `json:"on_demand_used"`
+	OnDemandLimit    int              `json:"on_demand_limit"`
+	FailureReason    *string          `json:"failure_reason"`
+	Events           []DynamicIPEvent `json:"events"`
+}
+
+// DynamicIPFailed is returned when enabling dynamic IP finishes in the failed state.
+type DynamicIPFailed struct{ DynamicIP *DynamicIP }
+
+func (e *DynamicIPFailed) Error() string {
+	if e.DynamicIP != nil && e.DynamicIP.FailureReason != nil && *e.DynamicIP.FailureReason != "" {
+		if e.DynamicIP.InstanceID != "" {
+			return fmt.Sprintf("dynamic IP on %s failed: %s", e.DynamicIP.InstanceID, *e.DynamicIP.FailureReason)
+		}
+		return fmt.Sprintf("dynamic IP failed: %s", *e.DynamicIP.FailureReason)
+	}
+	if e.DynamicIP != nil && e.DynamicIP.InstanceID != "" {
+		return fmt.Sprintf("dynamic IP on %s failed", e.DynamicIP.InstanceID)
+	}
+	return "dynamic IP failed"
 }

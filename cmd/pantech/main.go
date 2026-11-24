@@ -20,7 +20,7 @@ import (
 //	3  not signed in, or the key was refused (401) or lacks the scope (403)
 //	4  not found (404)
 //	5  an operation, order (domain orders too), connection check, scan, DNS
-//	   record change or certificate request finished, but failed
+//	   record change, certificate request or dynamic IP setup finished, but failed
 //	130 interrupted
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -53,6 +53,7 @@ func exitCode(err error) int {
 	var domainOrderFailed *api.DomainOrderFailed
 	var recordFailed *api.DNSRecordFailed
 	var certFailed *api.CertificateFailed
+	var dynamicIPFailed *api.DynamicIPFailed
 	switch {
 	case cli.IsNotSignedIn(err):
 		return 3
@@ -61,7 +62,8 @@ func exitCode(err error) int {
 	case errors.As(err, &problem) && problem.Status == 404:
 		return 4
 	case errors.As(err, &failed), errors.As(err, &orderFailed), errors.As(err, &migrateFailed),
-		errors.As(err, &domainOrderFailed), errors.As(err, &recordFailed), errors.As(err, &certFailed):
+		errors.As(err, &domainOrderFailed), errors.As(err, &recordFailed), errors.As(err, &certFailed),
+		errors.As(err, &dynamicIPFailed):
 		return 5
 	case cli.IsUsage(err):
 		return 2

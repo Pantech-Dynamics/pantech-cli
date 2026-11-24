@@ -50,6 +50,7 @@ so it stops working everywhere. `--keep-key` only forgets it. A key in
 pantech auth login | logout | status
 pantech vm list | get | create | start | stop | reboot | delete | ssh | change-ssh-key    (alias: instances)
 pantech vm private-network attach | detach
+pantech vm dynamic-ip get | set | rotate | off
 pantech vm orders list | get
 pantech db engines | list | get | create | start | stop | delete          (alias: database)
 pantech db access-rules set | add | remove | security-groups set | password set | password reset | orders list | get
@@ -75,8 +76,10 @@ pantech registry namespace [get | set <name>] | login                (alias: cr)
 pantech registry repos list | create | get | update | delete
 pantech registry tags list | get | delete
 pantech registry tokens list | create | revoke
-pantech object-storage [status] | keys list | create | revoke       (alias: s3)
-pantech buckets list | get | create | delete
+pantech object-storage [status] | usage [--range 24h|7d|30d] | keys list | create | revoke   (alias: s3)
+pantech buckets list | get | create | update | stats | empty | delete
+pantech buckets cors get|set | lifecycle get|set | tags get|set | object-lock get|set
+pantech buckets objects list | meta | upload | download | presign-download | presign-upload | folder | copy | delete | visibility | tags | lock   (alias: obj)
 pantech iam actions | members [--q] | settings [get | set] | access <member> | simulate
 pantech iam teams list | create | get | update | delete | members <team> [add | remove <member>]
 pantech iam policies list | create | get | update | delete | attachments | attach | detach
@@ -155,6 +158,28 @@ naming the rules to narrow, and how to change them with
 `pantech security-groups rules remove` and `rules add`. `vm get` shows the
 interface and its address; allow it on a database with
 `pantech db access-rules add`.
+
+### Dynamic IP
+
+Dynamic IP rotates a standard VM's outbound IPv4 address on a schedule
+(`every_12_hours` +60%, `daily` +50%, `weekly` +40%, `monthly` +30% on the VM's
+plan price), with optional on-demand changes (`--on-demand`, +95%, up to 10 per
+24 hours):
+
+```sh
+pantech vm create --name edge-1 --plan starter --image ubuntu-24-04 --ssh-key deploy --security-group locked --dynamic-ip weekly
+pantech vm dynamic-ip get edge-1
+pantech vm dynamic-ip set edge-1 --schedule daily --connections move --on-demand
+pantech vm dynamic-ip rotate edge-1
+pantech vm dynamic-ip off edge-1
+```
+
+A VM using dynamic IP must be a standard VM (not in a VPC subnet) with the
+private network attached, a security group that allows nothing from the private
+network's range, and the Pantech agent 0.5.0 or newer. `set` and `off` ask first
+(`--yes` to skip) and wait until ready unless `--no-wait`; a setup that finishes
+in `failed` exits with 5. `rotate` is never retried automatically so a lost
+answer cannot spend an extra on-demand change.
 
 A static_nat public IP keeps its address across VMs: `public-ips create --network
 <net>` without `--vm` reserves one detached, `public-ips attach <ip> --vm <vm>`
@@ -348,22 +373,38 @@ repository public ask first (`--yes` to skip). A retention flag of `0` (or
 
 ### Object storage (beta)
 
-S3-compatible buckets, in closed beta: `pantech object-storage` says whether it
-is on for your organization and prints the S3 endpoint. Buckets are named by id
-(`bkt_…`) or by name; names are shared by everyone.
+S3-compatible buckets, in closed beta: `pantech object-storage` shows whether it
+is on for your organization, the S3 endpoint, direct-upload availability and
+account limits; `pantech object-storage usage [--range 24h|7d|30d]` reports
+hourly transfer and request counts. Buckets are named by id (`bkt_…`) or by
+name; names are shared by everyone.
 
 ```sh
-pantech buckets create my-app-uploads [--quota 100] [--versioning]
+pantech buckets create my-app-uploads [--quota 100] [--versioning] [--object-lock]
+pantech buckets update my-app-uploads --quota-gb 200 --public-prefix public/
+pantech buckets stats my-app-uploads
+pantech buckets cors set my-app-uploads --file cors.json
+pantech buckets lifecycle set my-app-uploads --file lifecycle.json
+pantech buckets tags set my-app-uploads --tag env=prod
+pantech buckets object-lock set my-app-uploads --mode governance --days 30
+pantech buckets objects upload my-app-uploads images/logo.png --file ./logo.png
+pantech buckets objects list my-app-uploads --prefix images/
+pantech buckets objects visibility my-app-uploads images/logo.png --public
+pantech buckets objects download my-app-uploads images/logo.png --out ./logo.png
+pantech buckets objects presign-download my-app-uploads images/logo.png --expires-in 3600
 pantech object-storage keys create --name app [--read-only] [--bucket my-app-uploads]
 aws s3 ls s3://my-app-uploads --endpoint-url https://s3.af-abj.pantechdynamics.com
+pantech buckets empty my-app-uploads
 pantech buckets delete my-app-uploads [--force]      # --force deletes its objects too
 pantech object-storage keys revoke osk_…
 ```
 
 Storage is billed at 500 naira per GiB a month, measured hourly; data out and
 requests are free during the beta. `buckets create` asks first because it costs
-money, and `buckets delete` and `keys revoke` ask too (`--yes` to skip).
-`keys create` prints the secret once and never again.
+money, and `buckets empty`, `buckets delete`, `buckets objects delete` and
+`keys revoke` ask too (`--yes` to skip). `buckets objects upload` automatically
+switches to multipart upload for files larger than 20 MiB. `keys create` prints
+the secret once and never again.
 
 ### Teams and access policies
 
@@ -465,7 +506,7 @@ installed, and which apps already have Pantech.
 | 2 | The command was used wrongly |
 | 3 | Not signed in, or the key was refused or lacks the scope |
 | 4 | Not found |
-| 5 | An operation, order (including a domain order), connection check, scan, DNS record change or certificate request finished, but failed |
+| 5 | An operation, order (including a domain order), connection check, scan, DNS record change, certificate request or dynamic IP setup finished, but failed |
 | 130 | Interrupted |
 
 ## Development

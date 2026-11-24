@@ -155,6 +155,11 @@ type Request struct {
 	Path   string
 	Query  url.Values
 	Body   any // marshalled as JSON when not nil; a json.RawMessage is sent as is
+	// RawBody sends bytes as-is instead of JSON-encoding Body (for binary
+	// uploads). ContentType sets the Content-Type header (default
+	// application/octet-stream).
+	RawBody     []byte
+	ContentType string
 	// NoRetry sends the request once. For writes the API does not replay
 	// by Idempotency-Key (creating or deleting an SSH key): a retry after a
 	// lost answer would act twice, or lose a generated private key.
@@ -176,13 +181,22 @@ type Response struct {
 // happen twice.
 func (c *Client) Do(ctx context.Context, req Request, out any) (*Response, error) {
 	var payload []byte
-	if req.Body != nil {
+	var contentType string
+	switch {
+	case req.RawBody != nil:
+		payload = req.RawBody
+		contentType = req.ContentType
+		if contentType == "" {
+			contentType = "application/octet-stream"
+		}
+	case req.Body != nil:
 		var err error
 		if raw, ok := req.Body.(json.RawMessage); ok {
 			payload = raw
 		} else if payload, err = json.Marshal(req.Body); err != nil {
 			return nil, fmt.Errorf("encoding the request: %w", err)
 		}
+		contentType = "application/json"
 	}
 	idempotencyKey := ""
 	if req.Method != http.MethodGet && req.Method != http.MethodHead {
@@ -195,7 +209,7 @@ func (c *Client) Do(ctx context.Context, req Request, out any) (*Response, error
 	}
 
 	for attempt := 0; ; attempt++ {
-		res, err := c.send(ctx, req.Method, target, payload, idempotencyKey, req.Header)
+		res, err := c.send(ctx, req.Method, target, payload, contentType, idempotencyKey, req.Header)
 		wait, retry := c.retryAfter(attempt, res, err)
 		if req.NoRetry {
 			retry = false
@@ -229,7 +243,87 @@ func (c *Client) Do(ctx context.Context, req Request, out any) (*Response, error
 	}
 }
 
-func (c *Client) send(ctx context.Context, method, target string, payload []byte, idempotencyKey string, extra http.Header) (*Response, error) {
+// Download streams a binary response body to dst without buffering it in memory.
+// Retries happen only before any bytes have been written to dst.
+func (c *Client) Download(ctx context.Context, req Request, dst io.Writer) (int64, error) {
+	method := req.Method
+	if method == "" {
+		method = http.MethodGet
+	}
+	target := c.BaseURL + prefix + req.Path
+	if len(req.Query) > 0 {
+		target += "?" + req.Query.Encode()
+	}
+	for attempt := 0; ; attempt++ {
+		httpReq, err := http.NewRequestWithContext(ctx, method, target, nil)
+		if err != nil {
+			return 0, err
+		}
+		for k, v := range req.Header {
+			switch http.CanonicalHeaderKey(k) {
+			case "Authorization", "Idempotency-Key", "Content-Type":
+				continue
+			}
+			httpReq.Header[http.CanonicalHeaderKey(k)] = v
+		}
+		httpReq.Header.Set("Authorization", "Bearer "+c.Key)
+		if httpReq.Header.Get("Accept") == "" {
+			httpReq.Header.Set("Accept", "*/*")
+		}
+		if c.UserAgent != "" {
+			httpReq.Header.Set("User-Agent", c.UserAgent)
+		}
+		res, err := c.HTTP.Do(httpReq)
+		if err != nil {
+			netErr := &NetworkError{Err: err}
+			wait, retry := c.retryAfter(attempt, nil, netErr)
+			if req.NoRetry {
+				retry = false
+			}
+			if retry {
+				select {
+				case <-ctx.Done():
+					return 0, ctx.Err()
+				case <-time.After(wait):
+					continue
+				}
+			}
+			return 0, netErr
+		}
+		if res.StatusCode >= 400 {
+			data, rerr := io.ReadAll(io.LimitReader(res.Body, 32<<20))
+			_ = res.Body.Close()
+			if rerr != nil {
+				return 0, &NetworkError{Err: rerr}
+			}
+			apiRes := &Response{Status: res.StatusCode, Body: data}
+			if s, err := strconv.Atoi(res.Header.Get("Retry-After")); err == nil && s >= 0 {
+				apiRes.retryAfter = time.Duration(s) * time.Second
+			}
+			wait, retry := c.retryAfter(attempt, apiRes, nil)
+			if req.NoRetry {
+				retry = false
+			}
+			if retry {
+				select {
+				case <-ctx.Done():
+					return 0, ctx.Err()
+				case <-time.After(wait):
+					continue
+				}
+			}
+			return 0, problemFrom(apiRes)
+		}
+		n, copyErr := io.Copy(dst, res.Body)
+		_ = res.Body.Close()
+		if copyErr != nil {
+			return n, &NetworkError{Err: copyErr}
+		}
+		return n, nil
+	}
+}
+
+func (c *Client) send(ctx context.Context, method, target string, payload []byte, contentType, idempotencyKey string, extra http.Header) (*Response, error) {
 	var body io.Reader
 	if payload != nil {
 		body = bytes.NewReader(payload)
@@ -252,8 +346,8 @@ func (c *Client) send(ctx context.Context, method, target string, payload []byte
 	if c.UserAgent != "" {
 		httpReq.Header.Set("User-Agent", c.UserAgent)
 	}
-	if payload != nil {
-		httpReq.Header.Set("Content-Type", "application/json")
+	if payload != nil && contentType != "" {
+		httpReq.Header.Set("Content-Type", contentType)
 	}
 	if idempotencyKey != "" {
 		httpReq.Header.Set("Idempotency-Key", idempotencyKey)

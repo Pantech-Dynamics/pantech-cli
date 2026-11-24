@@ -23,6 +23,7 @@ func TestExitCode(t *testing.T) {
 		"domain order":     {&api.DomainOrderFailed{Order: &api.DomainOrder{ID: "dor_1", Kind: "register", Status: "failed"}}, 5},
 		"dns record":       {&api.DNSRecordFailed{Record: &api.DNSRecord{ID: "dnsr_1", Status: "failed"}}, 5},
 		"certificate":      {&api.CertificateFailed{Certificate: &api.Certificate{ID: "cert_1", Status: "failed"}}, 5},
+		"dynamic ip":       {&api.DynamicIPFailed{DynamicIP: &api.DynamicIP{InstanceID: "vm_1", State: "failed"}}, 5},
 		"conflict":         {fmt.Errorf("attaching: %w", &api.Problem{Status: 409, Code: "SECURITY_GROUP_ALLOWS_PRIVATE_NETWORK"}), 1},
 		"validation":       {&api.Problem{Status: 422, Code: "VALIDATION_FAILED"}, 1},
 		"anything else":    {errors.New("boom"), 1},

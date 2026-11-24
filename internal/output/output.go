@@ -116,7 +116,7 @@ func stateLook(s string) (string, string) {
 	switch s {
 	case "running", "active", "succeeded", "provisioned", "available", "enabled", "connected", "planned":
 		return "●", green
-	case "stopped", "deleted", "unavailable", "disabled", "canceled", "excluded":
+	case "stopped", "deleted", "unavailable", "disabled", "canceled", "excluded", "off":
 		return "○", dim
 	case "failed", "payment_failed", "error", "unsupported":
 		return "✗", red

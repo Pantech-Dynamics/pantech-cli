@@ -9,6 +9,38 @@ release workflow refuses a tag that has no section here.
 
 ## Unreleased
 
+## v0.9.0 — 2026-11-24
+
+### Added
+
+- Dynamic IP: `pantech vm dynamic-ip` (aliases `dip`, `rotation`,
+  `address-rotation`) manages scheduled outbound IPv4 rotation on standard VMs:
+  `get` shows status and recent rotations (with a friendly note when off),
+  `set` (`--schedule every_12_hours|daily|weekly|monthly`,
+  `--connections keep|move`, `--on-demand`, `--no-wait`) asks first with the
+  plan surcharge and waits until active (exiting with 5 on failure), `rotate`
+  triggers an immediate on-demand change without automatic retries and prints
+  the new IP and 24-hour quota, and `off` asks first and waits until off.
+  `pantech vm create` also takes `--dynamic-ip` and `--dynamic-ip-connections`
+  (requiring `--security-group` and refusing `--subnet`).
+- Object storage (closed beta): `pantech object-storage [status]` (alias `s3`)
+  shows whether it is on, the S3 endpoint, direct-upload availability and
+  account limits; `pantech object-storage usage [--range 24h|7d|30d]` reports
+  hourly transfer and request counts; `pantech object-storage keys list |
+  create | revoke` manages S3 access keys (`create` prints the secret once;
+  `--read-only`, `--bucket`).
+- Object storage buckets and objects: `pantech buckets list | get | create |
+  update | stats | empty | delete` (with `--quota`, `--quota-gb`/`--no-quota`,
+  `--versioning`/`--no-versioning`, `--object-lock`,
+  `--public-prefix`/`--clear-public-prefixes`, `--force`); bucket rules
+  `pantech buckets cors get|set`, `lifecycle get|set`, `tags get|set` and
+  `object-lock get|set`; and `pantech buckets objects` (alias `obj`) with
+  `list` (`--prefix`, `--delimiter`, `--search`, `--versions`, `--limit`),
+  `meta`, `upload` (automatic multipart upload above 20 MiB), `download`,
+  `presign-download`, `presign-upload`, `folder`, `copy`, `delete`,
+  `visibility` (`--public`/`--private`, printing the public URL), `tags` and
+  `lock`.
+
 ### Changed
 
 - `domains register` and `domains transfer` name the Domain Registration Agreement and
@@ -19,15 +51,6 @@ release workflow refuses a tag that has no section here.
 
 - `pantech vm ssh` logs in as `cloud-user` on CentOS Stream and `opensuse` on
   openSUSE. It used `root`, which those images refuse.
-
-### Added
-
-- Object storage (closed beta): `pantech object-storage [status]` (alias `s3`)
-  shows whether it is on and the S3 endpoint; `pantech buckets list | get |
-  create | delete` (`create` takes `--quota`, `--versioning`, `--object-lock`
-  and asks first since storage is billed; `delete --force` deletes the objects
-  too); `pantech object-storage keys list | create | revoke` (`create` prints
-  the secret once; `--read-only`, `--bucket`).
 
 ## v0.8.0 — 2026-11-10
 

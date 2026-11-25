@@ -4,7 +4,7 @@ The Pantech Dynamics CLI: virtual machines, managed databases, managed
 Kubernetes, volumes, snapshots, networks, public IPs, load balancers, security
 groups, SSH keys, webhooks, DNS zones and domains, a private container registry,
 object storage (beta),
-teams and access policies, TLS certificates, migrations from AWS and the catalogue from your terminal, through the [public API](https://docs.pantechdynamics.com/api).
+teams and access policies, TLS certificates, migrations from other clouds and the catalogue from your terminal, through the [public API](https://docs.pantechdynamics.com/api).
 
 ```sh
 curl -fsSL https://pantechdynamics.com/install | bash
@@ -65,8 +65,13 @@ pantech security-groups list | get | create | delete | rules set | add | remove
 pantech ssh-keys list | add | delete
 pantech webhooks list | get | create | update | delete | test | rotate-secret | event-types
 pantech webhooks deliveries list | get | redeliver
-pantech migrate connect | connections | connection | set-role | retry | rename-connection | disconnect   (alias: mig)
-pantech migrate scan | scans | scan-show | plan | plans | show | item | rename | delete | terraform
+pantech migrate providers | connect | connections | connection | set-role | set-federation | retry | rename-connection | disconnect   (alias: mig)
+pantech migrate agent enroll | revoke
+pantech migrate scan | scans | scan-show | plan | plans | show | item | rename | delete | terraform | invite
+pantech migrate buckets access | list | show | start | resync | cancel
+pantech migrate servers list | show | start | template | sync | cutover | cancel
+pantech migrate databases list | show | start | check | cutover | cancel | revoke-access   (alias: dbs)
+pantech migrate kubernetes source-access | list | show | start | preview | apply | sync-volumes | cutover | cancel | manifests   (alias: k8s)
 pantech dns zones list | create | get | update | delete | verify
 pantech dns records list | create | get | update | delete
 pantech dns import <zone> --file f.zone [--replace] | export <zone>
@@ -225,11 +230,15 @@ the flags given (`--event` replaces the whole list; `--enable` / `--disable`).
 (`--limit`, `--cursor`, or `--all`), `deliveries get` shows the exact payload
 sent, and `deliveries redeliver` sends one again with the same event id.
 
-### Migrating from AWS
+### Migrating from another cloud
 
-`pantech migrate` reads an AWS account and plans its move to Pantech. Nothing is
-created on Pantech or changed in AWS: a plan is something to review, edit and
-export as Terraform.
+`pantech migrate` reads an account in another cloud and plans its move to
+Pantech, then moves it item by item if you want. A plan creates nothing on
+Pantech and changes nothing in the other cloud. `pantech migrate providers`
+lists the clouds it reads: AWS, Google Cloud, Azure and Huawei Cloud through
+short-lived tokens Pantech signs and your cloud trusts, and DigitalOcean,
+Hetzner, Linode, Vultr, Contabo and OpenStack through the Pantech Migrate agent,
+which you run with a read-only token that never leaves your machine.
 
 ```sh
 pantech migrate connect --name "Production AWS"      # saves ./pantech-migrate-<id>.json
@@ -268,6 +277,48 @@ that makes the item unsupported); use an item's key with `item` to change it.
 `terraform` writes the files to `./pantech-migrate-<id>/` and never overwrites
 one without `--force` (nor writes through a symbolic link, even with it); every
 file is checked before any is written, and each is written whole or not at all. A connection check or scan that fails exits with 5.
+
+Other clouds connect the same way, with `--provider`:
+
+```sh
+pantech migrate connect --provider gcp --name "Production GCP"   # saves the gcloud script
+pantech migrate set-federation ccn_… --gcp-project-number … --gcp-pool-id … --gcp-provider-id … \
+  --gcp-service-account … --gcp-project web --wait               # what the script printed
+pantech migrate connect --provider azure --name Azure            # Azure CLI script; --azure-* flags
+pantech migrate connect --provider huawei --name Huawei          # steps; --huawei-idp-id, --huawei-project REGION=ID
+pantech migrate connect --provider hetzner --name Hetzner        # how to make a read-only token
+pantech migrate agent enroll ccn_…                               # the agent's one-time command, alone on stdout
+pantech migrate agent revoke ccn_…                               # asks first
+```
+
+`connect` saves the setup next to you (`./pantech-migrate-<id>.sh` or `.md`, and
+its further files as `./pantech-migrate-<id>-<file>`), never overwriting one
+without `--force`. `agent enroll` prints the command with its one-time code
+once; the code works once, for an hour.
+
+Moving what a plan lists (each move is free; what it creates bills as usual,
+and the steps that create something billed or delete data ask first, `--yes`
+to skip):
+
+```sh
+pantech migrate invite mig_… --key user:… [--key …]              # invite the plan's people, with their roles
+pantech migrate buckets access ccn_… --bucket logs               # saves the copy role's template
+pantech migrate buckets access ccn_… --role-arn <CopyRoleArn output>
+pantech migrate buckets start --connection ccn_… --source logs --to-new acme-logs
+pantech migrate buckets show bim_… --wait                        # then resync [--mirror-deletes]
+pantech migrate servers start mig_… --key instance:… --security-group sg_…
+pantech migrate servers show sco_… --wait                        # then sync, and cutover (builds the billed instance)
+pantech migrate databases start mig_… --key database:… --into db_… --source-ref prod-db [--mode replicate]
+pantech migrate databases show dbi_… --wait                      # then check, cutover, revoke-access
+pantech migrate kubernetes source-access                         # manifests for the source cluster
+pantech migrate kubernetes start mig_… --key kubernetes_cluster:… --cluster k8s_… [--copy-volumes]
+pantech migrate kubernetes preview kmv_…                         # then apply, sync-volumes, cutover
+pantech migrate kubernetes manifests kmv_…                       # the moved manifests, for GitOps (no Secret values)
+```
+
+Every `list` and `show` takes `--json`; `show --wait` follows a move until it
+settles and exits with 5 if it failed. Database logins stay on your Migrate
+agent: `--source-ref` only names one in its configuration.
 
 Every API error is printed with the API's own message, each invalid field and
 what it must be (on a `422`), and the error code and request id to quote to

@@ -46,6 +46,8 @@ pantech migrate providers lists the clouds it reads.
      pantech migrate set-role <connection id> --role-arn <RoleArn output> --wait   (AWS)
      pantech migrate set-federation <connection id> ... --wait                     (GCP, Azure, Huawei)
      pantech migrate agent enroll <connection id>                                  (agent clouds)
+     Any connection can also have the agent for server copies, database imports
+     and Kubernetes moves (see pantech migrate agent).
   3. pantech migrate scan <connection id> --wait
      reads servers, disks, networks, firewall groups, public addresses, load
      balancers, databases, buckets, Kubernetes clusters, people, SSH keys and

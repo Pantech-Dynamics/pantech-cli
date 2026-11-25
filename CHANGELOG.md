@@ -9,9 +9,37 @@ release workflow refuses a tag that has no section here.
 
 ## Unreleased
 
+## v0.10.0 — 2026-11-25
+
 ### Added
 
 - `pantech db snapshots schedule get` and `set`: take a database's snapshots automatically.
+- Pantech Migrate for every supported cloud: `pantech migrate providers`; `connect --provider`
+  (aws, gcp, azure, huawei, digitalocean, hetzner, linode, vultr, contabo, openstack) saves the
+  provider's setup and its further files; `set-federation` sends what a Google Cloud
+  (`--gcp-*`), Azure (`--azure-*`) or Huawei Cloud (`--huawei-*`) setup printed (`--wait`);
+  `agent enroll` prints the Pantech Migrate agent's one-time command alone on stdout (never
+  retried), and `agent revoke` asks first. Connections show their provider, account and agent;
+  scans and plans count Kubernetes clusters.
+- `pantech migrate invite <migration> --key …` invites a plan's people with their roles (asks
+  first), and `item --allow-version-downgrade` consents to a lower Kubernetes version.
+- `pantech migrate buckets access | list | show | start | resync | cancel`: copy access (saves
+  the copy role's template), bucket imports (`start` asks first; `resync --mirror-deletes` asks
+  first).
+- `pantech migrate servers list | show | start | template | sync | cutover | cancel`: server
+  copies through the agent or AWS snapshots (`template` saves the copy role's template;
+  `cutover` and `cancel` ask first).
+- `pantech migrate databases list | show | start | check | cutover | cancel | revoke-access`:
+  database imports through the agent (`--mode dump|replicate`).
+- `pantech migrate kubernetes source-access | list | show | start | preview | apply |
+  sync-volumes | cutover | cancel | manifests` (alias `k8s`): Kubernetes moves (`apply`,
+  `cutover` and `cancel` ask first).
+- `show --wait` on every move follows it until it settles; a failed one exits with 5.
+
+### Changed
+
+- `pantech migrate scan` says the USD 0.01 for reading spend is AWS's, and that an agent
+  connection's scan is run by your agent.
 
 ## v0.9.0 — 2026-11-24
 

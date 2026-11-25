@@ -20,47 +20,118 @@ type CloudFailure struct {
 	Message string `json:"message"`
 }
 
+// CloudConnectionSetup is what the user runs in their own cloud to connect
+// it: Access is federated (AWS, Google Cloud, Azure, Huawei Cloud) or agent.
+// Template is the main setup file, in TemplateFormat (cloudformation,
+// shell, markdown or agent); Files are further ones.
 type CloudConnectionSetup struct {
-	IssuerURL      string  `json:"issuer_url"`
-	Audience       string  `json:"audience"`
-	Subject        string  `json:"subject"`
-	QuickCreateURL *string `json:"quick_create_url"`
-	Template       string  `json:"template"`
+	Access         string                   `json:"access"`
+	IssuerURL      *string                  `json:"issuer_url"`
+	Audience       *string                  `json:"audience"`
+	Subject        string                   `json:"subject"`
+	QuickCreateURL *string                  `json:"quick_create_url"`
+	Template       string                   `json:"template"`
+	TemplateFormat string                   `json:"template_format"`
+	Files          []MigrationTerraformFile `json:"files"`
+	Permissions    []string                 `json:"permissions"`
+	Agent          *CloudAgentSetup         `json:"agent"`
+}
+
+// CloudAgentSetup is how to run the Pantech Migrate agent, for agent
+// providers. EnrollCommand holds <ENROLLMENT_CODE> where the code goes.
+type CloudAgentSetup struct {
+	Image            string   `json:"image"`
+	DownloadURL      *string  `json:"download_url"`
+	TokenVariables   []string `json:"token_variables"`
+	TokenHowTo       string   `json:"token_how_to"`
+	EnrollCommand    string   `json:"enroll_command"`
+	RunCommand       string   `json:"run_command"`
+	ContainerCommand string   `json:"container_command"`
+}
+
+// CloudAgentStatus is a connection's enrolled agent.
+type CloudAgentStatus struct {
+	ID                  string  `json:"id"`
+	Online              bool    `json:"online"`
+	AgentVersion        string  `json:"agent_version"`
+	Platform            string  `json:"platform"`
+	LastSeenAt          *string `json:"last_seen_at"`
+	CredentialExpiresAt *string `json:"credential_expires_at"`
 }
 
 // CloudConnection is a read-only link to another cloud account. Status is
-// awaiting_role, verifying, connected or failed.
+// awaiting_role (federated: waiting for what the setup printed),
+// awaiting_agent (agent providers), verifying, connected or failed.
 type CloudConnection struct {
-	ID           string               `json:"id"`
-	Provider     string               `json:"provider"`
-	Name         string               `json:"name"`
-	Status       string               `json:"status"`
-	Failure      *CloudFailure        `json:"failure"`
-	RoleARN      *string              `json:"role_arn"`
-	AWSAccountID *string              `json:"aws_account_id"`
-	VerifiedAt   *string              `json:"verified_at"`
-	CreatedAt    *string              `json:"created_at"`
-	UpdatedAt    *string              `json:"updated_at"`
-	Setup        CloudConnectionSetup `json:"setup"`
+	ID                string               `json:"id"`
+	Provider          string               `json:"provider"`
+	Name              string               `json:"name"`
+	Status            string               `json:"status"`
+	Failure           *CloudFailure        `json:"failure"`
+	RoleARN           *string              `json:"role_arn"`
+	AWSAccountID      *string              `json:"aws_account_id"`
+	ExternalAccountID *string              `json:"external_account_id"`
+	Agent             *CloudAgentStatus    `json:"agent"`
+	VerifiedAt        *string              `json:"verified_at"`
+	CreatedAt         *string              `json:"created_at"`
+	UpdatedAt         *string              `json:"updated_at"`
+	Setup             CloudConnectionSetup `json:"setup"`
+}
+
+// Account is the source account: the AWS account, or what else the
+// connection reached.
+func (c *CloudConnection) Account() *string {
+	if c.ExternalAccountID != nil && *c.ExternalAccountID != "" {
+		return c.ExternalAccountID
+	}
+	return c.AWSAccountID
+}
+
+// CloudProvider is a cloud Pantech Migrate can connect.
+type CloudProvider struct {
+	Slug           string `json:"slug"`
+	Name           string `json:"name"`
+	Access         string `json:"access"`
+	CostReadable   bool   `json:"cost_readable"`
+	PeopleReadable bool   `json:"people_readable"`
+	Available      bool   `json:"available"`
+}
+
+// CloudAgentEnrollment is a one-time enrollment code, shown once.
+type CloudAgentEnrollment struct {
+	Code          string `json:"code"`
+	ExpiresAt     string `json:"expires_at"`
+	EnrollCommand string `json:"enroll_command"`
+}
+
+// MigrationInviteResult is what happened to one person of a plan.
+type MigrationInviteResult struct {
+	Key      string  `json:"key"`
+	Email    *string `json:"email"`
+	Role     *string `json:"role"`
+	Outcome  string  `json:"outcome"`
+	Reason   *string `json:"reason"`
+	InviteID *string `json:"invite_id"`
 }
 
 type CloudScanCounts struct {
-	Instances      int `json:"instances"`
-	Volumes        int `json:"volumes"`
-	Networks       int `json:"networks"`
-	Subnets        int `json:"subnets"`
-	SecurityGroups int `json:"security_groups"`
-	PublicIPs      int `json:"public_ips"`
-	LoadBalancers  int `json:"load_balancers"`
-	Databases      int `json:"databases"`
-	Buckets        int `json:"buckets"`
-	Users          int `json:"users"`
-	SSHKeys        int `json:"ssh_keys"`
+	Instances          int `json:"instances"`
+	Volumes            int `json:"volumes"`
+	Networks           int `json:"networks"`
+	Subnets            int `json:"subnets"`
+	SecurityGroups     int `json:"security_groups"`
+	PublicIPs          int `json:"public_ips"`
+	LoadBalancers      int `json:"load_balancers"`
+	Databases          int `json:"databases"`
+	Buckets            int `json:"buckets"`
+	Users              int `json:"users"`
+	SSHKeys            int `json:"ssh_keys"`
+	KubernetesClusters int `json:"kubernetes_clusters"`
 }
 
 func (c *CloudScanCounts) Total() int {
 	return c.Instances + c.Volumes + c.Networks + c.Subnets + c.SecurityGroups + c.PublicIPs +
-		c.LoadBalancers + c.Databases + c.Buckets + c.Users + c.SSHKeys
+		c.LoadBalancers + c.Databases + c.Buckets + c.Users + c.SSHKeys + c.KubernetesClusters
 }
 
 type CloudCostMonth struct {
@@ -81,12 +152,15 @@ type CloudCost struct {
 type CloudScan struct {
 	ID           string                                  `json:"id"`
 	ConnectionID string                                  `json:"connection_id"`
+	Runner       string                                  `json:"runner"`
 	Status       string                                  `json:"status"`
 	Failure      *CloudFailure                           `json:"failure"`
 	CreatedAt    *string                                 `json:"created_at"`
 	StartedAt    *string                                 `json:"started_at"`
 	FinishedAt   *string                                 `json:"finished_at"`
+	Provider     *string                                 `json:"provider"`
 	AWSAccountID *string                                 `json:"aws_account_id"`
+	External     *string                                 `json:"external_account_id"`
 	Regions      []string                                `json:"regions"`
 	Counts       *CloudScanCounts                        `json:"counts"`
 	Cost         *CloudCost                              `json:"cost"`
@@ -132,6 +206,19 @@ type MigrationItemTarget struct {
 	Email         *string             `json:"email"`
 	PublicKey     *string             `json:"public_key"`
 	Listeners     []MigrationListener `json:"listeners"`
+	ImageSlug     *string             `json:"image_slug"`
+	InviteID      *string             `json:"invite_id"`
+	Bucket        *struct {
+		Name      *string `json:"name"`
+		SizeBytes *int64  `json:"size_bytes"`
+	} `json:"bucket"`
+	Kubernetes *struct {
+		Version   *string `json:"version"`
+		NodePools []struct {
+			PlanSlug *string `json:"plan_slug"`
+			Count    int     `json:"count"`
+		} `json:"node_pools"`
+	} `json:"kubernetes"`
 }
 
 type MigrationItemSource struct {

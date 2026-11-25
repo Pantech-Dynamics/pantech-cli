@@ -31,24 +31,35 @@ func newMigrateCmd(a *app) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "migrate",
 		Aliases: []string{"mig"},
-		Short:   "Plan a move from AWS to Pantech: connect, scan, plan, export Terraform",
+		Short:   "Move from another cloud to Pantech: connect, scan, plan, then move or export Terraform",
 		Long: `Pantech Migrate reads another cloud account and plans its move to Pantech.
+pantech migrate providers lists the clouds it reads.
 
-  1. pantech migrate connect --name "Production AWS"
-     creates a connection and the CloudFormation template for a read-only role
-     in your AWS account. No access keys are ever sent to Pantech.
-  2. Create the stack in AWS, then:
-     pantech migrate set-role <connection id> --role-arn <RoleArn output> --wait
+  1. pantech migrate connect --name "Production AWS" [--provider aws]
+     creates a connection and saves its setup. AWS: a CloudFormation template
+     for a read-only role. Google Cloud, Azure, Huawei Cloud: a script or steps
+     that let Pantech's short-lived tokens read your account. DigitalOcean,
+     Hetzner, Linode, Vultr, Contabo, OpenStack: the Pantech Migrate agent,
+     which you run with a read-only token that never leaves your machine.
+     No access keys are ever sent to Pantech.
+  2. Finish connecting:
+     pantech migrate set-role <connection id> --role-arn <RoleArn output> --wait   (AWS)
+     pantech migrate set-federation <connection id> ... --wait                     (GCP, Azure, Huawei)
+     pantech migrate agent enroll <connection id>                                  (agent clouds)
   3. pantech migrate scan <connection id> --wait
      reads servers, disks, networks, firewall groups, public addresses, load
-     balancers, databases, buckets, users, SSH keys and three months of spend.
+     balancers, databases, buckets, Kubernetes clusters, people, SSH keys and
+     three months of spend where the cloud offers it.
   4. pantech migrate plan <scan id> --name "Move to Pantech"
      maps each item to its Pantech equivalent, with a monthly price comparison.
-  5. pantech migrate show <migration id>, then edit items with
-     pantech migrate item, and export with pantech migrate terraform.
+  5. pantech migrate show <migration id>, edit items with pantech migrate item,
+     and export with pantech migrate terraform, or move item by item:
+     pantech migrate invite, buckets, servers, databases and kubernetes.
 
-Nothing is created on Pantech or changed in AWS: a plan is something to
-review, edit and export. Owners and admins only, for every change.`,
+A plan creates nothing on Pantech and changes nothing in the other cloud.
+Each move is free; what it creates bills as usual, and the steps that create
+something billed or delete data ask first. Owners and admins only, for every
+change.`,
 	}
 	cmd.AddCommand(
 		newMigrateConnectCmd(a),
@@ -68,6 +79,14 @@ review, edit and export. Owners and admins only, for every change.`,
 		newMigrateRenameCmd(a),
 		newMigrateDeleteCmd(a),
 		newMigrateTerraformCmd(a),
+		newMigrateProvidersCmd(a),
+		newMigrateSetFederationCmd(a),
+		newMigrateAgentCmd(a),
+		newMigrateInviteCmd(a),
+		newMigrateBucketsCmd(a),
+		newMigrateServersCmd(a),
+		newMigrateDatabasesCmd(a),
+		newMigrateKubernetesCmd(a),
 	)
 	return cmd
 }
@@ -123,7 +142,12 @@ func migrateError(err error, id string) error {
 func connectionNext(c *api.CloudConnection) [][2]string {
 	switch c.Status {
 	case "awaiting_role":
+		if c.Provider != "aws" && c.Provider != "" {
+			return setupNext(c)
+		}
 		return [][2]string{{"Then", "pantech migrate set-role " + c.ID + " --role-arn <RoleArn output> --wait"}}
+	case "awaiting_agent":
+		return setupNext(c)
 	case "verifying":
 		return [][2]string{{"Wait for the check", "pantech migrate connection " + c.ID + " --watch"}}
 	case "connected":
@@ -150,10 +174,19 @@ func connectionDetail(out *output.Printer, c *api.CloudConnection) output.Detail
 		State:    out.State(c.Status),
 		Subtitle: c.ID,
 		Sections: [][]output.Pair{
-			{{"Provider", strings.ToUpper(c.Provider)}, {"Account", output.Or(c.AWSAccountID)}, {"Role", output.Or(c.RoleARN)}, {"Verified", output.When(c.VerifiedAt)}},
+			{{"Provider", strings.ToUpper(c.Provider)}, {"Account", output.Or(c.Account())}, {"Role", output.Or(c.RoleARN)}, {"Verified", output.When(c.VerifiedAt)}},
 			{{"Created", output.When(c.CreatedAt)}, {"Updated", output.When(c.UpdatedAt)}},
 		},
 		Next: connectionNext(c),
+	}
+	if ag := c.Agent; ag != nil {
+		online := "offline"
+		if ag.Online {
+			online = "online"
+		}
+		d.Sections = append(d.Sections, []output.Pair{{"Agent", ag.ID + " · " + online + " · " + ag.AgentVersion + " " + ag.Platform}, {"Last seen", output.When(ag.LastSeenAt)}})
+	} else if s := c.Setup.Agent; s != nil && c.Status == "awaiting_agent" {
+		d.Sections = append(d.Sections, []output.Pair{{"Token", strings.Join(s.TokenVariables, ", ") + " in the agent's environment"}, {"How", s.TokenHowTo}})
 	}
 	if c.Failure != nil {
 		d.Sections = append([][]output.Pair{{{"Failure", failureText(c.Failure)}}}, d.Sections...)
@@ -162,15 +195,24 @@ func connectionDetail(out *output.Printer, c *api.CloudConnection) output.Detail
 }
 
 func newMigrateConnectCmd(a *app) *cobra.Command {
-	var name, templateOut string
+	var name, templateOut, provider string
 	var noBrowser, force bool
 	cmd := &cobra.Command{
-		Use:   "connect --name NAME",
-		Short: "Start connecting an AWS account; saves the role's CloudFormation template",
-		Long: `Start a connection to an AWS account. Nothing is shared yet: this saves a
-CloudFormation template that creates, in your account, a read-only role only
-Pantech can assume, with short-lived tokens for this one connection. No access
-keys are ever sent to Pantech.
+		Use:   "connect --name NAME [--provider PROVIDER]",
+		Short: "Start connecting a cloud account; saves its setup",
+		Long: `Start a connection to an account in another cloud (--provider, aws by default;
+pantech migrate providers lists them). Nothing is shared yet.
+
+Google Cloud, Azure and Huawei Cloud: the setup (a gcloud script, an Azure CLI
+script, or steps, and their further files) is saved as
+./pantech-migrate-<connection id>.<sh|md> and -<file> next to it; run it, then
+send what it printed with pantech migrate set-federation. DigitalOcean, Hetzner,
+Linode, Vultr, Contabo and OpenStack: how to make a read-only token is saved;
+then pantech migrate agent enroll gives the agent's one-time command.
+
+AWS: this saves a CloudFormation template that creates, in your account, a
+read-only role only Pantech can assume, with short-lived tokens for this one
+connection. No access keys are ever sent to Pantech.
 
 The template is saved to ./pantech-migrate-<connection id>.json (--template-out
 to choose); a file already there is kept unless you pass --force. When AWS's
@@ -181,7 +223,9 @@ then send its RoleArn output with pantech migrate set-role.
 
 At most 10 connections per organization. Owners and admins only.`,
 		Example: `  pantech migrate connect --name "Production AWS"
-  pantech migrate connect --name staging --template-out role.json --no-browser`,
+  pantech migrate connect --name staging --template-out role.json --no-browser
+  pantech migrate connect --provider gcp --name "Production GCP"
+  pantech migrate connect --provider hetzner --name Hetzner`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			// A --template-out already there is refused before anything is created.
@@ -198,9 +242,12 @@ At most 10 connections per organization. Owners and admins only.`,
 				return err
 			}
 			var conn api.CloudConnection
-			res, err := c.Do(ctx(cmd), api.Request{Method: http.MethodPost, Path: "/cloud-connections", Body: map[string]any{"provider": "aws", "name": name}}, &conn)
+			if provider == "" {
+				provider = "aws"
+			}
+			res, err := c.Do(ctx(cmd), api.Request{Method: http.MethodPost, Path: "/cloud-connections", Body: map[string]any{"provider": provider, "name": name}}, &conn)
 			if err != nil {
-				return api.AsFlags(err, map[string]string{"name": "--name"})
+				return api.AsFlags(err, map[string]string{"name": "--name", "provider": "--provider"})
 			}
 			switch {
 			case a.out.JSON:
@@ -209,6 +256,26 @@ At most 10 connections per organization. Owners and admins only.`,
 				a.out.Line("%s", output.Clean(conn.ID))
 			}
 			id := output.Clean(conn.ID)
+			if provider != "aws" {
+				paths, err := saveSetup(&conn, templateOut, force)
+				if err != nil {
+					return fmt.Errorf("connection %s was created, but its setup was not saved: %w\nSee it: pantech migrate connection %s --json", id, err, id)
+				}
+				if a.out.JSON || a.out.Quiet {
+					return nil
+				}
+				a.out.Success("Created connection %s (%s).", conn.ID, conn.Name)
+				for _, p := range paths {
+					a.out.Note("Saved %s", p)
+				}
+				if len(conn.Setup.Permissions) > 0 {
+					a.out.Note("\nIt grants read-only access only: %s.", strings.Join(conn.Setup.Permissions, ", "))
+				}
+				for _, n := range setupNext(&conn) {
+					a.out.Next(n[0], n[1])
+				}
+				return nil
+			}
 			saveErr := func() error {
 				path := templateOut
 				if path == "" {
@@ -265,7 +332,8 @@ At most 10 connections per organization. Owners and admins only.`,
 	}
 	f := cmd.Flags()
 	f.StringVar(&name, "name", "", `a name for the connection, e.g. "Production AWS" (required)`)
-	f.StringVar(&templateOut, "template-out", "", "where to save the CloudFormation template (default ./pantech-migrate-<id>.json)")
+	f.StringVar(&provider, "provider", "aws", "the cloud: aws, gcp, azure, huawei, digitalocean, hetzner, linode, vultr, contabo or openstack")
+	f.StringVar(&templateOut, "template-out", "", "where to save the CloudFormation template or main setup file (default ./pantech-migrate-<id>.<ext>)")
 	f.BoolVar(&noBrowser, "no-browser", false, "print the create-stack link instead of opening a browser")
 	f.BoolVar(&force, "force", false, "overwrite a template file already there")
 	_ = cmd.MarkFlagRequired("name")
@@ -293,9 +361,9 @@ func newMigrateConnectionsCmd(a *app) *cobra.Command {
 			rows := make([][]string, len(conns))
 			for i := range conns {
 				cn := &conns[i]
-				rows[i] = []string{a.out.Dim(cn.ID), cn.Name, a.out.State(cn.Status), output.Or(cn.AWSAccountID), output.Ago(cn.CreatedAt)}
+				rows[i] = []string{a.out.Dim(cn.ID), cn.Name, cn.Provider, a.out.State(cn.Status), output.Or(cn.Account()), output.Ago(cn.CreatedAt)}
 			}
-			a.out.Table([]string{"id", "name", "status", "account", "created"}, rows)
+			a.out.Table([]string{"id", "name", "provider", "status", "account", "created"}, rows)
 			a.out.Summary(count(len(conns), "connection"))
 			return nil
 		},
@@ -348,9 +416,11 @@ func newMigrateConnectionCmd(a *app) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "connection <connection id>",
 		Short: "Show a cloud connection",
-		Long: `Show a connection. Its status is awaiting_role until you send the role ARN,
-verifying while Pantech tries it, then connected or failed. --watch follows a
-connection being verified until the check is done.`,
+		Long: `Show a connection. Its status is awaiting_role until you send the role ARN
+(or what a Google Cloud, Azure or Huawei Cloud setup printed), awaiting_agent
+until the Pantech Migrate agent enrolls, verifying while Pantech tries it, then
+connected or failed. --watch follows a connection being verified until the
+check is done.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			c, err := a.client()
@@ -382,7 +452,7 @@ func (a *app) updateConnection(cmd *cobra.Command, id string, body map[string]an
 	var conn api.CloudConnection
 	res, err := c.Do(ctx(cmd), api.Request{Method: http.MethodPatch, Path: connectionPath(id), Body: body}, &conn)
 	if err != nil {
-		return migrateError(api.AsFlags(err, map[string]string{"role_arn": "--role-arn", "name": "--name"}), id)
+		return migrateError(api.AsFlags(err, map[string]string{"role_arn": "--role-arn", "name": "--name", "gcp": "--gcp-*", "azure": "--azure-*", "huawei": "--huawei-*"}), id)
 	}
 	if !a.out.JSON && !a.out.Quiet {
 		a.out.Success(done, conn.ID)
@@ -522,6 +592,7 @@ var scanKinds = []kindLabel{
 	{"buckets", "Buckets"},
 	{"users", "Users"},
 	{"ssh_keys", "SSH keys"},
+	{"kubernetes_clusters", "Kubernetes clusters"},
 }
 
 func scanCount(c *api.CloudScanCounts, kind string) int {
@@ -548,6 +619,8 @@ func scanCount(c *api.CloudScanCounts, kind string) int {
 		return c.Users
 	case "ssh_keys":
 		return c.SSHKeys
+	case "kubernetes_clusters":
+		return c.KubernetesClusters
 	}
 	return 0
 }
@@ -683,9 +756,10 @@ func newMigrateScanCmd(a *app) *cobra.Command {
 		Short: "Scan a connected account: what it runs and what it costs",
 		Long: `Scan a connected account: servers, disks, networks, firewall groups, public
 addresses, load balancers, databases, bucket names, users, SSH keys and the
-last three months of spend, in every enabled region. Most accounts take under
-five minutes. Reading spend costs USD 0.01 on your AWS bill, so it asks
-first (--yes to skip).
+last three months of spend where the cloud offers it, in every enabled region.
+Most accounts take under five minutes. For AWS, reading spend costs USD 0.01
+on your AWS bill, so it asks first (--yes to skip). An agent connection's scan
+is run by your Pantech Migrate agent, which must be running.
 
 Prints the scan's id; --wait follows it (checking every 3 seconds) and shows
 what it found. Owners and admins only.`,
@@ -830,6 +904,13 @@ func inventoryDetail(kind string, item map[string]json.RawMessage) string {
 		}
 	case "users":
 		add(f("email"))
+		add(f("access_level"))
+	case "kubernetes_clusters":
+		add(f("provider"))
+		add(f("version"))
+		if n := f("node_pools"); n != "" {
+			add(n + " node pools")
+		}
 	case "ssh_keys":
 		add(f("fingerprint"))
 	}
@@ -946,6 +1027,7 @@ var itemKinds = []kindLabel{
 	{"ssh_key", "SSH keys"},
 	{"user", "Users"},
 	{"bucket", "Buckets"},
+	{"kubernetes_cluster", "Kubernetes clusters"},
 }
 
 // kindNoun is one item of a plan's kind, for counts: "2 servers".
@@ -953,7 +1035,7 @@ var kindNoun = map[string]string{
 	"network": "network", "subnet": "subnet", "security_group": "firewall group",
 	"instance": "server", "volume": "disk", "public_ip": "public IP",
 	"load_balancer": "load balancer", "database": "database", "ssh_key": "SSH key",
-	"user": "user", "bucket": "bucket",
+	"user": "user", "bucket": "bucket", "kubernetes_cluster": "Kubernetes cluster",
 }
 
 func kindCount(n int, kind string) string {
@@ -1289,7 +1371,7 @@ Use an item's key with pantech migrate item to change it.`,
 func newMigrateItemCmd(a *app) *cobra.Command {
 	var key, planSlug, cidr, role, email string
 	var storageGB int
-	var exclude, include bool
+	var exclude, include, downgrade bool
 	cmd := &cobra.Command{
 		Use:   "item <migration id> --key KEY [changes]",
 		Short: "Change one item of a plan: leave it out, or its plan, size, range, role or email",
@@ -1297,7 +1379,9 @@ func newMigrateItemCmd(a *app) *cobra.Command {
 --exclude leaves it out of the move and --include puts it back; --plan picks
 another plan (servers and databases), --storage-gb a size (disks and
 databases), --cidr an address range (networks and subnets), and --role and
---email a person's. Items flagged as unsupported stay unsupported.`,
+--email a person's, and --allow-version-downgrade consents to a lower
+Kubernetes version than the source cluster runs. Items flagged as unsupported
+stay unsupported.`,
 		Example: `  pantech migrate item mig_123 --key instance:us-east-1:i-0abc --plan standard-4
   pantech migrate item mig_123 --key volume:us-east-1:vol-0abc --exclude
   pantech migrate item mig_123 --key user:alice --role admin --email alice@example.com`,
@@ -1334,8 +1418,11 @@ databases), --cidr an address range (networks and subnets), and --role and
 			if fl.Changed("email") {
 				body["email"] = email
 			}
+			if fl.Changed("allow-version-downgrade") {
+				body["allow_version_downgrade"] = downgrade
+			}
 			if len(body) == 1 {
-				return &usageError{errors.New("nothing to change: pass --exclude, --include, --plan, --storage-gb, --cidr, --role or --email"), cmd}
+				return &usageError{errors.New("nothing to change: pass --exclude, --include, --plan, --storage-gb, --cidr, --role, --email or --allow-version-downgrade"), cmd}
 			}
 			c, err := a.client()
 			if err != nil {
@@ -1344,7 +1431,7 @@ databases), --cidr an address range (networks and subnets), and --role and
 			var m api.Migration
 			res, err := c.Do(ctx(cmd), api.Request{Method: http.MethodPatch, Path: migrationPath(args[0]) + "/items", Body: body}, &m)
 			if err != nil {
-				return migrateError(api.AsFlags(err, map[string]string{"key": "--key", "excluded": "--exclude", "plan_slug": "--plan", "storage_gb": "--storage-gb", "cidr": "--cidr", "role": "--role", "email": "--email"}), args[0])
+				return migrateError(api.AsFlags(err, map[string]string{"key": "--key", "excluded": "--exclude", "plan_slug": "--plan", "storage_gb": "--storage-gb", "cidr": "--cidr", "role": "--role", "email": "--email", "allow_version_downgrade": "--allow-version-downgrade"}), args[0])
 			}
 			switch {
 			case a.out.JSON:
@@ -1378,6 +1465,7 @@ databases), --cidr an address range (networks and subnets), and --role and
 	f.StringVar(&cidr, "cidr", "", "an address range, for a network or subnet")
 	f.StringVar(&role, "role", "", "admin or member, for a person")
 	f.StringVar(&email, "email", "", "the email to invite, for a person")
+	f.BoolVar(&downgrade, "allow-version-downgrade", false, "for a Kubernetes cluster: run a lower Kubernetes version than the source")
 	_ = cmd.MarkFlagRequired("key")
 	return cmd
 }

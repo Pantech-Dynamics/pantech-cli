@@ -238,7 +238,11 @@ Pantech and changes nothing in the other cloud. `pantech migrate providers`
 lists the clouds it reads: AWS, Google Cloud, Azure and Huawei Cloud through
 short-lived tokens Pantech signs and your cloud trusts, and DigitalOcean,
 Hetzner, Linode, Vultr, Contabo and OpenStack through the Pantech Migrate agent,
-which you run with a read-only token that never leaves your machine.
+which you run with a read-only token that never leaves your machine. Any
+connection, AWS, Google Cloud, Azure and Huawei Cloud included, can have one agent
+for the copy steps that read from inside your network: server copies (the agent
+runs on the server with `pantech-migrate-agent run --server-copy sco_…`),
+database imports and Kubernetes moves (`pantech migrate agent enroll`).
 
 ```sh
 pantech migrate connect --name "Production AWS"      # saves ./pantech-migrate-<id>.json

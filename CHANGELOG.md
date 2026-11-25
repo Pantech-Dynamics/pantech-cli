@@ -9,6 +9,26 @@ release workflow refuses a tag that has no section here.
 
 ## Unreleased
 
+## v0.10.1 — 2026-11-25
+
+### Changed
+
+- `pantech migrate agent enroll` works on every connection. AWS, Google Cloud, Azure and Huawei
+  Cloud connections can have an agent too, for server copies, database imports and Kubernetes
+  moves (Pantech still scans those clouds itself), and Pantech no longer refuses enrollment with
+  `CLOUD_CONNECTION_NOT_AGENT`, so the CLI's special message for it ("This cloud needs no agent")
+  is gone. The help says a connection has one agent at a time, and the command now points to
+  `run --server-copy` for copying a server.
+- `pantech migrate servers start` with the agent prints the command to run on the server,
+  `pantech-migrate-agent run --server-copy <copy id>`, and the help explains that only an agent
+  started that way copies the server, reading only its own disks.
+- `pantech migrate databases` help shows how to name a source in the agent's configuration file
+  (`database_sources`, with `dsn_env` or `dsn_file`), `pantech-migrate-agent check`, and that
+  imports need the agent program on a host with `pg_dump` or `mysqldump`, not the container image.
+- `pantech migrate kubernetes` help says copy pods run only Pantech's copier image, which the
+  source cluster must be able to pull.
+- `pantech migrate agent revoke` says revoking also ends the agent's server copy uploads.
+
 ## v0.10.0 — 2026-11-25
 
 ### Added

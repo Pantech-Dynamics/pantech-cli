@@ -217,9 +217,16 @@ func newMigrateAgentCmd(a *app) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "agent",
 		Short: "Enroll or revoke the Pantech Migrate agent of a connection",
-		Long: `DigitalOcean, Hetzner, Linode, Vultr, Contabo and OpenStack are read by the
-Pantech Migrate agent, which you run on your own machine with a read-only token
-in its environment. The token never leaves that machine.`,
+		Long: `Any connection can have one Pantech Migrate agent, which you run in your own
+network. On DigitalOcean, Hetzner, Linode, Vultr, Contabo and OpenStack it scans,
+with a read-only token in its environment. On AWS, Google Cloud, Azure and Huawei
+Cloud Pantech scans the cloud itself, and the agent, which needs no token there,
+runs the copy steps that read from inside your network: server copies, database
+imports and Kubernetes moves. Tokens, database connection strings and
+kubeconfigs never leave the agent's machine.
+
+A connection has one agent at a time: enrolling one on a server to copy it
+replaces the connection's long-running agent until you enroll that one again.`,
 	}
 	cmd.AddCommand(newMigrateAgentEnrollCmd(a), newMigrateAgentRevokeCmd(a))
 	return cmd
@@ -229,11 +236,11 @@ func newMigrateAgentEnrollCmd(a *app) *cobra.Command {
 	return &cobra.Command{
 		Use:   "enroll <connection id>",
 		Short: "Issue a one-time enrollment code and print the command that uses it",
-		Long: `Issue a one-time enrollment code for an agent connection and print the
-command that uses it, alone on stdout: run it where the agent will run, with
-your read-only provider token in its environment. The code works once, for an
-hour, and is shown only now. Issuing a code replaces any unused one; using it
-replaces the connection's earlier agent. Owners and admins only.`,
+		Long: `Issue a one-time enrollment code for a connection's agent (any connection)
+and print the command that uses it, alone on stdout: run it where the agent will
+run. The code works once, for an hour, and is shown only now. Issuing a code
+replaces any unused one; using it replaces the connection's earlier agent.
+Owners and admins only.`,
 		Example: `  pantech migrate agent enroll ccn_123
   pantech migrate agent enroll ccn_123 --json   # the code, its expiry and the command`,
 		Args: cobra.ExactArgs(1),
@@ -246,9 +253,6 @@ replaces the connection's earlier agent. Owners and admins only.`,
 			// Each call issues a new code, so it is never retried.
 			res, err := c.Do(ctx(cmd), api.Request{Method: http.MethodPost, Path: connectionPath(args[0]) + "/agent-enrollments", NoRetry: true}, &e)
 			if err != nil {
-				if api.IsCode(err, "CLOUD_CONNECTION_NOT_AGENT") {
-					return fmt.Errorf("%w\nThis cloud needs no agent: see pantech migrate connection %s", err, args[0])
-				}
 				return migrateError(err, args[0])
 			}
 			if a.out.JSON {
@@ -257,8 +261,9 @@ replaces the connection's earlier agent. Owners and admins only.`,
 			}
 			a.out.Line("%s", output.Clean(e.EnrollCommand))
 			if !a.out.Quiet {
-				a.out.Note("\nRun that where the agent will run, with your read-only token in its environment. The code works once, until %s, and is not shown again.", output.When(&e.ExpiresAt))
-				a.out.Next("Then keep the agent running and", "pantech migrate scan "+output.Clean(args[0])+" --wait")
+				a.out.Note("\nRun that where the agent will run. The code works once, until %s, and is not shown again.", output.When(&e.ExpiresAt))
+				a.out.Note("Then keep it running (pantech-migrate-agent run), with your read-only token in its environment where the agent scans; to copy a server, run it on that server as root with run --server-copy <copy id>.")
+				a.out.Next("Then", "pantech migrate connection "+output.Clean(args[0]))
 			}
 			return nil
 		},
@@ -269,7 +274,7 @@ func newMigrateAgentRevokeCmd(a *app) *cobra.Command {
 	return &cobra.Command{
 		Use:   "revoke <connection id>",
 		Short: "End a connection's agent at once",
-		Long:  `End a connection's Pantech Migrate agent: its credential stops working on its next request. The connection then waits for a new agent. Asks first (--yes to skip).`,
+		Long:  `End a connection's Pantech Migrate agent: its credential stops working on its next request, and any server copy upload it was running ends. The connection then waits for a new agent. Asks first (--yes to skip).`,
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			c, err := a.client()
@@ -286,7 +291,7 @@ func newMigrateAgentRevokeCmd(a *app) *cobra.Command {
 			}
 			if !a.out.JSON && !a.out.Quiet {
 				a.out.Success("Revoked the agent of %s.", conn.ID)
-				a.out.Note("Stop it on its machine, and delete its read-only token in the other cloud too.")
+				a.out.Note("Stop it on its machine and delete its state file, and delete any read-only token it used in the other cloud.")
 			}
 			a.printConnection(&conn, res.Body)
 			return nil
@@ -837,8 +842,19 @@ since, and "cutover" runs the last pass after you stop the application and
 builds the instance, billed like any new instance. The copy is free.
 
 The Pantech Migrate agent on the server sends its disks (--source agent, the
-default), or Pantech reads AWS EBS snapshots through a separate copy role
-(--source aws_snapshot; "template" saves its CloudFormation template).`,
+default, on any cloud), or Pantech reads AWS EBS snapshots through a separate
+copy role (--source aws_snapshot; "template" saves its CloudFormation template).
+
+With the agent: enroll it on the server itself for the plan's connection
+("pantech migrate agent enroll"), start the copy, then run it there as root
+(Administrator on Windows) with the copy's id:
+
+  pantech-migrate-agent run --server-copy sco_…
+
+Only an agent started that way is handed the copy, and it reads only that
+server's own disks: the boot disk, unless --disk names each one (boot disk
+first). A connection has one agent, so this replaces its long-running agent
+until you enroll that one again.`,
 	}
 	cmd.AddCommand(newMigrateMoveListCmd(a, serverCopies), newMigrateServersShowCmd(a), newMigrateServersStartCmd(a),
 		newMigrateServersTemplateCmd(a), newMigrateServersActCmd(a, "sync"), newMigrateServersActCmd(a, "cutover"), newMigrateServersActCmd(a, "cancel"))
@@ -901,7 +917,7 @@ Pantech instance with the item's plan (or --plan), and --subnet or
 copy is free.
 
 --source agent (the default): the Pantech Migrate agent on the server checks it
-and sends its disks. --source aws_snapshot: Pantech reads EBS snapshots
+and sends its disks; run it there with --server-copy and this copy's id. --source aws_snapshot: Pantech reads EBS snapshots
 through the copy role from "pantech migrate servers template" (--copy-role-arn),
 and either snapshots the volumes itself (--create-snapshots) or reads the ones
 you name (--snapshot VOLUME_ID=SNAPSHOT_ID, repeat it). Windows servers are
@@ -946,6 +962,9 @@ copied with the agent only. Owners and admins only.`,
 			return a.actOn(cmd, migrationPath(args[0])+"/server-copies", body, &s, func(raw []byte) {
 				if !a.out.JSON && !a.out.Quiet {
 					a.out.Success("Started server copy %s. Nothing is created until the cut-over.", s.ID)
+					if source == "" || source == "agent" {
+						a.out.Note("On the server, as root: pantech-migrate-agent run --server-copy %s", output.Clean(s.ID))
+					}
 				}
 				a.printServerCopy(&s, raw)
 			})
@@ -1173,9 +1192,16 @@ func newMigrateDatabasesCmd(a *app) *cobra.Command {
 		Aliases: []string{"dbs"},
 		Short:   "Import planned databases into your Pantech databases, through the agent",
 		Long: `Move one of a plan's databases into one of your Pantech databases (same
-engine, created first) through the Pantech Migrate agent in your network. The
-agent reads the source with credentials that stay on it; Pantech never
-receives them. It checks the source first and reports what to fix. --mode dump
+engine, created first) through the Pantech Migrate agent in your network, on
+any cloud. Name each source in the agent's configuration file, with its
+connection string in an environment variable or a file only the agent's user
+can read; Pantech never receives it:
+
+  {"database_sources": {"prod-db": {"engine": "postgres", "dsn_env": "PROD_DB_DSN"}}}
+
+"pantech-migrate-agent check" tests each source. The agent runs pg_dump or
+mysqldump, so run the agent program on a host that has them, not the container
+image. It checks the source first and reports what to fix. --mode dump
 copies once (stop writes first); --mode replicate (PostgreSQL) follows changes
 until "cutover". The move is free; the destination bills as usual.`,
 	}
@@ -1360,8 +1386,11 @@ func newMigrateKubernetesCmd(a *app) *cobra.Command {
 		Short:   "Move planned Kubernetes clusters into your Pantech clusters",
 		Long: `Move a plan's Kubernetes cluster into one of your running Pantech clusters.
 Apply the manifests from "source-access" to the source cluster; the Pantech
-Migrate agent exports it with that read-only access, and the credential never
-leaves the agent. "start" exports, "preview" dry-runs every object against
+Migrate agent exports it with that read-only access (the kubeconfig named under
+"kubernetes" in its configuration file), and the credential never leaves the
+agent. Volume copy pods run only Pantech's copier image
+(ghcr.io/pantech-dynamics/pantech-migrate-copier), which the source cluster must
+be able to pull. "start" exports, "preview" dry-runs every object against
 your cluster, "apply" applies what the preview checked, "sync-volumes" copies
 volume data again, and "cutover" (once writes on the source stopped) takes the
 last copy and scales the held workloads up. The move is free; the cluster

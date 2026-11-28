@@ -81,10 +81,13 @@ pantech registry namespace [get | set <name>] | login                (alias: cr)
 pantech registry repos list | create | get | update | delete
 pantech registry tags list | get | delete
 pantech registry tokens list | create | revoke
-pantech object-storage [status] | usage [--range 24h|7d|30d] | keys list | create | revoke   (alias: s3)
-pantech buckets list | get | create | update | stats | empty | delete
+pantech object-storage [status] | settings --block-public-access=true|false | usage [--range 24h|7d|30d] | keys list | create | revoke   (alias: s3)
+pantech buckets list | shared | get | create | update | stats | empty | delete
 pantech buckets cors get|set | lifecycle get|set | tags get|set | object-lock get|set
-pantech buckets objects list | meta | upload | download | presign-download | presign-upload | folder | copy | delete | visibility | tags | lock   (alias: obj)
+pantech buckets shares list | create | revoke
+pantech buckets notifications list | create | update | delete
+pantech buckets domains list | create | update | delete
+pantech buckets objects list | meta | upload | download | presign-download | presign-upload | upload-form | folder | copy | delete | restore-version | visibility | tags | lock   (alias: obj)
 pantech iam actions | members [--q] | settings [get | set] | access <member> | simulate
 pantech iam teams list | create | get | update | delete | members <team> [add | remove <member>]
 pantech iam policies list | create | get | update | delete | attachments | attach | detach
@@ -429,25 +432,35 @@ repository public ask first (`--yes` to skip). A retention flag of `0` (or
 ### Object storage (beta)
 
 S3-compatible buckets, in closed beta: `pantech object-storage` shows whether it
-is on for your organization, the S3 endpoint, direct-upload availability and
-account limits; `pantech object-storage usage [--range 24h|7d|30d]` reports
-hourly transfer and request counts. Buckets are named by id (`bkt_…`) or by
-name; names are shared by everyone.
+is on for your organization, the S3 endpoint, direct-upload availability,
+block-public-access state and account limits; `pantech object-storage settings
+--block-public-access=true|false` toggles organization-wide Block All Public
+Access (turning it on asks first, since public objects stop being served at
+once); `pantech object-storage usage [--range 24h|7d|30d]` reports hourly
+transfer and request counts. Buckets are named by id (`bkt_…`) or by name;
+names are shared by everyone.
 
 ```sh
-pantech buckets create my-app-uploads [--quota 100] [--versioning] [--object-lock]
-pantech buckets update my-app-uploads --quota-gb 200 --public-prefix public/
+pantech object-storage settings --block-public-access=true
+pantech buckets create my-app-uploads [--quota 100] [--versioning] [--object-lock] [--encryption sse_s3]
+pantech buckets update my-app-uploads --quota-gb 200 --encryption sse_s3 --public-prefix public/
+pantech buckets shared
 pantech buckets stats my-app-uploads
 pantech buckets cors set my-app-uploads --file cors.json
 pantech buckets lifecycle set my-app-uploads --file lifecycle.json
 pantech buckets tags set my-app-uploads --tag env=prod
 pantech buckets object-lock set my-app-uploads --mode governance --days 30
+pantech buckets shares create my-app-uploads --grantee-org org_… --permissions read_only --prefix exports/
+pantech buckets notifications create my-app-uploads --name thumbs --event object.created --prefix images/ --target-type function --target-id fn_…
+pantech buckets domains create my-app-uploads --hostname assets.example.com --certificate cert_… --index-document index.html --spa-mode --cache-ttl 3600
 pantech buckets objects upload my-app-uploads images/logo.png --file ./logo.png
 pantech buckets objects list my-app-uploads --prefix images/
 pantech buckets objects visibility my-app-uploads images/logo.png --public
 pantech buckets objects download my-app-uploads images/logo.png --out ./logo.png
 pantech buckets objects presign-download my-app-uploads images/logo.png --expires-in 3600
-pantech object-storage keys create --name app [--read-only] [--bucket my-app-uploads]
+pantech buckets objects upload-form my-app-uploads --key-prefix incoming/ --max-bytes 10485760 --expires-in 900
+pantech buckets objects restore-version my-app-uploads images/logo.png [--version-id v1]
+pantech object-storage keys create --name app [--permissions read_write|read_only|write_only] [--bucket my-app-uploads] [--prefix uploads/] [--expires-in 90d]
 aws s3 ls s3://my-app-uploads --endpoint-url https://s3.af-abj.pantechdynamics.com
 pantech buckets empty my-app-uploads
 pantech buckets delete my-app-uploads [--force]      # --force deletes its objects too
@@ -456,10 +469,12 @@ pantech object-storage keys revoke osk_…
 
 Storage is billed at 500 naira per GiB a month, measured hourly; data out and
 requests are free during the beta. `buckets create` asks first because it costs
-money, and `buckets empty`, `buckets delete`, `buckets objects delete` and
-`keys revoke` ask too (`--yes` to skip). `buckets objects upload` automatically
-switches to multipart upload for files larger than 20 MiB. `keys create` prints
-the secret once and never again.
+money, and `object-storage settings --block-public-access=true`, `buckets empty`,
+`buckets delete`, `buckets objects delete`, `buckets shares revoke`,
+`buckets notifications delete`, `buckets domains delete` and `keys revoke` ask
+too (`--yes` to skip). `buckets objects upload` automatically switches to
+multipart upload for files larger than 20 MiB. `keys create` takes bucket names
+(not `bkt_` ids) for `--bucket` and prints the secret once and never again.
 
 ### Teams and access policies
 

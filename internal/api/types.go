@@ -304,7 +304,13 @@ type ObjectStorageStatus struct {
 	Endpoint            string               `json:"endpoint"`
 	Beta                bool                 `json:"beta"`
 	DirectUploadEnabled bool                 `json:"direct_upload_enabled"`
+	BlockPublicAccess   *bool                `json:"block_public_access"`
 	Limits              *ObjectStorageLimits `json:"limits"`
+}
+
+// ObjectStorageSettings holds organization-level object storage settings.
+type ObjectStorageSettings struct {
+	BlockPublicAccess bool `json:"block_public_access"`
 }
 
 // Bucket is an object storage bucket. QuotaBytes 0 is no limit.
@@ -318,6 +324,7 @@ type Bucket struct {
 	ObjectCount    int64    `json:"object_count"`
 	Versioning     bool     `json:"versioning"`
 	ObjectLock     bool     `json:"object_lock"`
+	Encryption     string   `json:"encryption"`
 	PublicPrefixes []string `json:"public_prefixes"`
 	State          string   `json:"state"`
 	CreatedAt      string   `json:"created_at"`
@@ -332,8 +339,11 @@ type ObjectStorageKey struct {
 	Region          string   `json:"region"`
 	AccessKeyID     string   `json:"access_key_id"`
 	ReadOnly        bool     `json:"read_only"`
+	Permissions     string   `json:"permissions"`
 	Buckets         []string `json:"buckets"`
+	Prefixes        []string `json:"prefixes"`
 	CreatedAt       string   `json:"created_at"`
+	ExpiresAt       *string  `json:"expires_at"`
 	SecretAccessKey string   `json:"secret_access_key,omitempty"`
 	Endpoint        string   `json:"endpoint,omitempty"`
 }
@@ -509,6 +519,83 @@ type MultipartStart struct {
 type MultipartPart struct {
 	PartNumber int    `json:"part_number"`
 	ETag       string `json:"etag"`
+}
+
+// BucketUploadForm is a signed browser upload form (S3 POST policy) for a bucket.
+type BucketUploadForm struct {
+	URL        string            `json:"url"`
+	Fields     map[string]string `json:"fields"`
+	ExpiresAt  string            `json:"expires_at"`
+	BucketName string            `json:"bucket_name"`
+}
+
+// RestoreObjectVersionResult summarizes restoring a version or removing a delete marker.
+type RestoreObjectVersionResult struct {
+	Key               string `json:"key"`
+	Action            string `json:"action"`
+	RestoredVersionID string `json:"restored_version_id"`
+	VersionID         string `json:"version_id"`
+	ETag              string `json:"etag"`
+	LastModified      string `json:"last_modified"`
+}
+
+// SharedBucket is a bucket shared with your organization by another organization.
+type SharedBucket struct {
+	ShareID             string   `json:"share_id"`
+	BucketID            string   `json:"bucket_id"`
+	BucketName          string   `json:"bucket_name"`
+	Region              string   `json:"region"`
+	Endpoint            string   `json:"endpoint"`
+	OwnerOrganizationID string   `json:"owner_organization_id"`
+	Permissions         string   `json:"permissions"`
+	Prefixes            []string `json:"prefixes"`
+	ExpiresAt           *string  `json:"expires_at"`
+	CreatedAt           string   `json:"created_at"`
+	S3BucketRef         string   `json:"s3_bucket_ref"`
+}
+
+// BucketShare is a cross-organization share configured on a bucket.
+type BucketShare struct {
+	ID                    string   `json:"id"`
+	BucketID              string   `json:"bucket_id"`
+	OwnerOrganizationID   string   `json:"owner_organization_id"`
+	GranteeOrganizationID string   `json:"grantee_organization_id"`
+	Permissions           string   `json:"permissions"`
+	Prefixes              []string `json:"prefixes"`
+	ExpiresAt             *string  `json:"expires_at"`
+	RevokedAt             *string  `json:"revoked_at"`
+	CreatedAt             string   `json:"created_at"`
+	UpdatedAt             string   `json:"updated_at"`
+}
+
+// BucketNotification is an object event notification rule on a bucket.
+type BucketNotification struct {
+	ID         string   `json:"id"`
+	BucketID   string   `json:"bucket_id"`
+	Name       string   `json:"name"`
+	Events     []string `json:"events"`
+	Prefix     string   `json:"prefix"`
+	Suffix     string   `json:"suffix"`
+	TargetType string   `json:"target_type"`
+	TargetID   string   `json:"target_id"`
+	Enabled    bool     `json:"enabled"`
+	CreatedAt  string   `json:"created_at"`
+	UpdatedAt  string   `json:"updated_at"`
+}
+
+// BucketDomain is a custom domain and static website binding on a bucket.
+type BucketDomain struct {
+	ID              string `json:"id"`
+	BucketID        string `json:"bucket_id"`
+	Hostname        string `json:"hostname"`
+	CertificateID   string `json:"certificate_id"`
+	IndexDocument   string `json:"index_document"`
+	ErrorDocument   string `json:"error_document"`
+	SPAMode         bool   `json:"spa_mode"`
+	CacheTTLSeconds int    `json:"cache_ttl_seconds"`
+	Status          string `json:"status"`
+	CreatedAt       string `json:"created_at"`
+	UpdatedAt       string `json:"updated_at"`
 }
 
 // DynamicIPEvent is one change in a VM's dynamic IP history.

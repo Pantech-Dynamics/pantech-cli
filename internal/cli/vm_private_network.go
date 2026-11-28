@@ -83,8 +83,9 @@ and use-dns: false), then run netplan apply.`,
 		Use:   "detach <vm>",
 		Short: "Remove a VM's interface on the private database network",
 		Long: `Remove the interface "attach" added. The VM must be running or stopped with
-no other change in progress. Afterwards remove any database access rule for
-its address, and the interface from the guest's network configuration.`,
+no other change in progress; turn off dynamic IP first if it is on. Afterwards
+remove any database access rule for its address, and the interface from the
+guest's network configuration.`,
 		Example: `  pantech vm private-network detach web-1`,
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -100,7 +101,10 @@ its address, and the interface from the guest's network configuration.`,
 				return err
 			}
 			req := api.Request{Method: http.MethodDelete, Path: "/instances/" + url.PathEscape(id) + "/private-network"}
-			return a.runWrite(cmd, c, req, detachNoWait, verb{"Detaching the private network from", "Detached the private network from"}, args[0])
+			if err := a.runWrite(cmd, c, req, detachNoWait, verb{"Detaching the private network from", "Detached the private network from"}, args[0]); err != nil {
+				return dynamicIPError(cmd, c, id, args[0], err)
+			}
+			return nil
 		},
 	}
 	detach.Flags().BoolVar(&detachNoWait, "no-wait", false, "return the operation id without waiting")

@@ -432,3 +432,84 @@ func TestBucketObjectsPresignFolderCopyDeleteVisibilityTagsLock(t *testing.T) {
 		}
 	})
 }
+
+func TestBucketObjectsUploadFormAndRestoreVersion(t *testing.T) {
+	t.Run("upload-form mints signed POST policy and validates flags", func(t *testing.T) {
+		f, srv := newFakeAPI(t)
+		formResp := `{"url":"https://s3.af-abj.pantechdynamics.com/uploads","fields":{"key":"avatars/u1.png","policy":"eyJ...","x-amz-signature":"sig"},"expires_at":"2026-11-28T13:00:00Z","bucket_name":"uploads"}`
+		f.on("POST /buckets/bkt_1/objects/upload-form", 200, formResp).
+			on("POST /buckets/bkt_1/objects/upload-form", 200, formResp)
+
+		for _, tc := range []struct {
+			name string
+			args []string
+		}{
+			{"missing key and key-prefix", []string{"buckets", "objects", "upload-form", "bkt_1"}},
+			{"both key and key-prefix", []string{"buckets", "objects", "upload-form", "bkt_1", "--key", "a", "--key-prefix", "b/"}},
+			{"min-bytes greater than max-bytes", []string{"buckets", "objects", "upload-form", "bkt_1", "--key", "a", "--min-bytes", "100", "--max-bytes", "50"}},
+			{"expires-in too low", []string{"buckets", "objects", "upload-form", "bkt_1", "--key", "a", "--expires-in", "10"}},
+		} {
+			if r := run(t, srv, "", tc.args...); !IsUsage(r.err) {
+				t.Fatalf("%s: err=%v, want usage error", tc.name, r.err)
+			}
+		}
+
+		r := run(t, srv, "", "buckets", "objects", "upload-form", "bkt_1",
+			"--key", "avatars/u1.png",
+			"--min-bytes", "1",
+			"--max-bytes", "5242880",
+			"--content-type", "image/png",
+			"--expires-in", "900",
+		)
+		if r.err != nil || !strings.Contains(r.stdout, "https://s3.af-abj.pantechdynamics.com/uploads") || !strings.Contains(r.stdout, "x-amz-signature") {
+			t.Fatalf("stdout=%q stderr=%q err=%v", r.stdout, r.stderr, r.err)
+		}
+		want := map[string]any{
+			"key":                "avatars/u1.png",
+			"min_bytes":          float64(1),
+			"max_bytes":          float64(5242880),
+			"content_type":       "image/png",
+			"expires_in_seconds": float64(900),
+		}
+		if got := f.sentJSON("POST", "/buckets/bkt_1/objects/upload-form"); !reflect.DeepEqual(got, want) {
+			t.Fatalf("body=%v want=%v", got, want)
+		}
+
+		rq := run(t, srv, "", "buckets", "objects", "upload-form", "bkt_1", "--key-prefix", "incoming/", "-q")
+		if rq.err != nil || strings.TrimSpace(rq.stdout) != "https://s3.af-abj.pantechdynamics.com/uploads" {
+			t.Fatalf("quiet stdout=%q err=%v", rq.stdout, rq.err)
+		}
+		calls := f.sent("POST", "/buckets/bkt_1/objects/upload-form")
+		if len(calls) != 2 || calls[0].IdempotencyKey == "" || calls[1].IdempotencyKey == "" {
+			t.Fatalf("calls=%+v", calls)
+		}
+	})
+
+	t.Run("restore-version undeletes delete marker and restores specific version", func(t *testing.T) {
+		f, srv := newFakeAPI(t)
+		f.on("POST /buckets/bkt_1/objects/restore-version", 200, `{"key":"report.pdf","action":"removed_delete_marker","restored_version_id":"v1","version_id":"","etag":"e1","last_modified":"2026-11-28T12:00:00Z"}`).
+			on("POST /buckets/bkt_1/objects/restore-version", 200, `{"key":"report.pdf","action":"copied_version","restored_version_id":"v1","version_id":"v3","etag":"e1","last_modified":"2026-11-28T12:01:00Z"}`)
+
+		r1 := run(t, srv, "", "buckets", "objects", "restore-version", "bkt_1", "report.pdf")
+		if r1.err != nil || !strings.Contains(r1.stderr, "Removed delete marker") || !strings.Contains(r1.stderr, "v1") {
+			t.Fatalf("undelete stderr=%q err=%v", r1.stderr, r1.err)
+		}
+		if got := f.sentJSON("POST", "/buckets/bkt_1/objects/restore-version"); !reflect.DeepEqual(got, map[string]any{"key": "report.pdf"}) {
+			t.Fatalf("undelete body=%v", got)
+		}
+
+		r2 := run(t, srv, "", "buckets", "objects", "restore-version", "bkt_1", "report.pdf", "--version-id", "v1", "-q")
+		if r2.err != nil || strings.TrimSpace(r2.stdout) != "v3" {
+			t.Fatalf("restore stdout=%q err=%v", r2.stdout, r2.err)
+		}
+		calls := f.sent("POST", "/buckets/bkt_1/objects/restore-version")
+		if len(calls) != 2 || calls[0].IdempotencyKey == "" || calls[1].IdempotencyKey == "" {
+			t.Fatalf("calls=%+v", calls)
+		}
+		var second map[string]any
+		_ = json.Unmarshal(calls[1].Body, &second)
+		if !reflect.DeepEqual(second, map[string]any{"key": "report.pdf", "version_id": "v1"}) {
+			t.Fatalf("second body=%v", second)
+		}
+	})
+}

@@ -9,6 +9,44 @@ release workflow refuses a tag that has no section here.
 
 ## Unreleased
 
+## v0.11.0 — 2026-11-28
+
+### Added
+
+- Object storage organization settings: `pantech object-storage status` now
+  shows `Block public access`, and `pantech object-storage settings
+  --block-public-access=true|false` toggles organization-wide Block All Public
+  Access (asking first when turning it on, since public objects stop being
+  served anonymously at once).
+- Scoped and expiring object storage access keys: `pantech object-storage keys
+  create` adds `--permissions read_write|read_only|write_only`, repeatable
+  `--prefix`, `--expires-at` (RFC 3339) and `--expires-in` (duration such as
+  `24h` or `90d`), while keeping `--read-only` backward-compatible; `keys list`
+  now shows permissions, prefixes and expiration, and `--bucket` help notes it
+  takes bucket names rather than `bkt_` ids.
+- Default server-side encryption on buckets: `pantech buckets create` and
+  `update` accept `--encryption none|sse_s3`, and `buckets list` and `get`
+  display each bucket's encryption setting.
+- Browser upload forms and version restoration: `pantech buckets objects
+  upload-form <bucket>` mints signed HTML POST policies (`--key` or
+  `--key-prefix`, `--min-bytes`, `--max-bytes`, `--content-type`,
+  `--expires-in`); `pantech buckets objects restore-version <bucket> <key>
+  [--version-id ...]` restores a historical version or removes the latest
+  delete marker when `--version-id` is omitted.
+- Cross-organization bucket sharing: `pantech buckets shared` lists buckets
+  shared with your organization, and `pantech buckets shares list | create |
+  revoke` manages cross-account shares (`--grantee-org`, `--permissions`,
+  `--prefix`, `--expires-at`; `revoke` asks first).
+- Bucket event notifications: `pantech buckets notifications list | create |
+  update | delete` subscribes webhooks or functions to `object.created` and
+  `object.removed` events with optional `--prefix` / `--suffix` filters
+  (`delete` asks first).
+- Bucket custom domains and static website hosting: `pantech buckets domains
+  list | create | update | delete` attaches custom hostnames with Certificate
+  Manager TLS certificates (`--hostname`, `--certificate`, `--index-document`,
+  `--error-document`, `--spa-mode`/`--no-spa-mode`, `--cache-ttl`; `delete`
+  asks first).
+
 ## v0.10.1 — 2026-11-25
 
 ### Changed

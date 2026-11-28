@@ -8,7 +8,9 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -18,13 +20,16 @@ import (
 
 const gib = int64(1) << 30
 
+// nowFunc returns the current time; overridable in tests.
+var nowFunc = time.Now
+
 var bucketKind = kind{prefix: "bkt_", path: "/buckets", noun: "bucket", listCmd: "pantech buckets list", noSearch: true}
 
 func newObjectStorageCmd(a *app) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "object-storage",
 		Aliases: []string{"s3"},
-		Short:   "S3-compatible object storage (closed beta): status, usage and access keys",
+		Short:   "S3-compatible object storage (closed beta): status, settings, usage and access keys",
 		Long: `S3-compatible object storage, in closed beta.
 
   1. pantech object-storage                            is it on, and the endpoint
@@ -32,6 +37,9 @@ func newObjectStorageCmd(a *app) *cobra.Command {
   3. pantech buckets create my-app-uploads
   4. pantech object-storage keys create --name app     prints the secret once
   5. aws s3 ls s3://my-app-uploads --endpoint-url <endpoint>
+
+Use "pantech object-storage settings --block-public-access=true|false" to block
+or allow public access across all buckets in your organization.
 
 Storage is billed at 500 naira per GiB a month, measured hourly. Data out and
 requests are free during the beta.`,
@@ -43,7 +51,7 @@ requests are free during the beta.`,
 		Short: "Show whether object storage is on, and its endpoint",
 		Args:  cobra.NoArgs,
 		RunE:  func(cmd *cobra.Command, _ []string) error { return a.objectStorageStatus(cmd) },
-	}, newObjectStorageUsageCmd(a), newObjectStorageKeysCmd(a))
+	}, newObjectStorageSettingsCmd(a), newObjectStorageUsageCmd(a), newObjectStorageKeysCmd(a))
 	return cmd
 }
 
@@ -52,6 +60,8 @@ func objectStorageError(err error) error {
 	switch {
 	case api.IsCode(err, "OBJECT_STORAGE_NOT_ENABLED"):
 		return fmt.Errorf("%w\nObject storage is in closed beta: ask support to switch it on for your organization", err)
+	case api.IsCode(err, "PUBLIC_ACCESS_BLOCKED"):
+		return fmt.Errorf("%w\nSee: pantech object-storage settings --block-public-access=false", err)
 	case api.IsCode(err, "BUCKET_NOT_FOUND"):
 		return fmt.Errorf("%w\nSee: pantech buckets list", err)
 	case api.IsCode(err, "BUCKET_NOT_EMPTY"):
@@ -82,8 +92,16 @@ func (a *app) objectStorageStatus(cmd *cobra.Command) error {
 	case !s.Enabled:
 		a.out.Note("Object storage is in closed beta and is not on for this organization. Ask support to join.")
 	default:
+		blockPublic := "—"
+		if s.BlockPublicAccess != nil {
+			blockPublic = onOff(*s.BlockPublicAccess)
+		}
 		sections := [][]output.Pair{
-			{{"Endpoint", s.Endpoint}, {"Direct uploads", onOff(s.DirectUploadEnabled)}},
+			{
+				{"Endpoint", s.Endpoint},
+				{"Direct uploads", onOff(s.DirectUploadEnabled)},
+				{"Block public access", blockPublic},
+			},
 		}
 		if s.Limits != nil {
 			var lim []output.Pair
@@ -109,6 +127,54 @@ func (a *app) objectStorageStatus(cmd *cobra.Command) error {
 		})
 	}
 	return nil
+}
+
+func newObjectStorageSettingsCmd(a *app) *cobra.Command {
+	var blockPublicAccess bool
+	cmd := &cobra.Command{
+		Use:   "settings --block-public-access=true|false",
+		Short: "Change organization-level object storage settings",
+		Long: `Turn Block All Public Access on or off for your organization's buckets.
+When turned on, public prefixes and public objects stop being served anonymously
+at once, and making anything public is refused until turned off.`,
+		Example: `  pantech object-storage settings --block-public-access=true
+  pantech object-storage settings --block-public-access=false`,
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if !cmd.Flags().Changed("block-public-access") {
+				return &usageError{errors.New("pass --block-public-access=true or --block-public-access=false"), cmd}
+			}
+			c, err := a.client()
+			if err != nil {
+				return err
+			}
+			if blockPublicAccess {
+				if err := a.confirm("Block all public access for your organization's buckets? Public prefixes and public objects stop being served anonymously at once."); err != nil {
+					return err
+				}
+			}
+			var out api.ObjectStorageSettings
+			res, err := c.Do(ctx(cmd), api.Request{
+				Method: http.MethodPatch,
+				Path:   "/object-storage/settings",
+				Body:   map[string]any{"block_public_access": blockPublicAccess},
+			}, &out)
+			if err != nil {
+				return objectStorageError(api.AsFlags(err, map[string]string{"block_public_access": "--block-public-access"}))
+			}
+			switch {
+			case a.out.JSON:
+				a.out.RawJSON(res.Body)
+			case a.out.Quiet:
+				a.out.Line("%s", onOff(out.BlockPublicAccess))
+			default:
+				a.out.Success("Block public access is now %s.", onOff(out.BlockPublicAccess))
+			}
+			return nil
+		},
+	}
+	cmd.Flags().BoolVar(&blockPublicAccess, "block-public-access", false, "block all public access across your organization's buckets (true or false)")
+	return cmd
 }
 
 func newObjectStorageUsageCmd(a *app) *cobra.Command {
@@ -210,6 +276,7 @@ pantech object-storage and an access key from pantech object-storage keys create
 	}
 	cmd.AddCommand(
 		newBucketsListCmd(a),
+		newBucketsSharedCmd(a),
 		newBucketsGetCmd(a),
 		newBucketsCreateCmd(a),
 		newBucketsUpdateCmd(a),
@@ -220,9 +287,29 @@ pantech object-storage and an access key from pantech object-storage keys create
 		newBucketsLifecycleCmd(a),
 		newBucketsTagsCmd(a),
 		newBucketsObjectLockCmd(a),
+		newBucketsSharesCmd(a),
+		newBucketsNotificationsCmd(a),
+		newBucketsDomainsCmd(a),
 		newBucketsObjectsCmd(a),
 	)
 	return cmd
+}
+
+func encryptionText(enc string) string {
+	if enc == "" {
+		return "none"
+	}
+	return enc
+}
+
+func validateEncryption(enc string) (string, error) {
+	v := strings.ToLower(strings.TrimSpace(enc))
+	switch v {
+	case "none", "sse_s3":
+		return v, nil
+	default:
+		return "", fmt.Errorf("--encryption must be none or sse_s3 (got %q)", enc)
+	}
 }
 
 func newBucketsListCmd(a *app) *cobra.Command {
@@ -245,9 +332,9 @@ func newBucketsListCmd(a *app) *cobra.Command {
 			}
 			rows := make([][]string, len(buckets))
 			for i, b := range buckets {
-				rows[i] = []string{a.out.Dim(b.ID), output.Clean(b.Name), a.out.State(b.State), b.Region, bytesText(b.SizeBytes), quotaText(b.QuotaBytes), onOff(b.Versioning), output.Ago(&b.CreatedAt)}
+				rows[i] = []string{a.out.Dim(b.ID), output.Clean(b.Name), a.out.State(b.State), b.Region, bytesText(b.SizeBytes), quotaText(b.QuotaBytes), onOff(b.Versioning), encryptionText(b.Encryption), output.Ago(&b.CreatedAt)}
 			}
-			a.out.Table([]string{"id", "name", "state", "region", "stored", "size limit", "versioning", "created"}, rows)
+			a.out.Table([]string{"id", "name", "state", "region", "stored", "size limit", "versioning", "encryption", "created"}, rows)
 			a.out.Summary(count(len(buckets), "bucket"))
 			return nil
 		},
@@ -270,6 +357,7 @@ func bucketDetail(out *output.Printer, b *api.Bucket) output.Detail {
 				{"Size limit", quotaText(b.QuotaBytes)},
 				{"Versioning", onOff(b.Versioning)},
 				{"Object lock", onOff(b.ObjectLock)},
+				{"Encryption", encryptionText(b.Encryption)},
 				{"Public prefixes", public},
 			},
 			{{"Created", output.When(&b.CreatedAt)}},
@@ -304,7 +392,7 @@ func newBucketsGetCmd(a *app) *cobra.Command {
 }
 
 func newBucketsCreateCmd(a *app) *cobra.Command {
-	var region string
+	var region, encryption string
 	var quotaGiB int64
 	var versioning, objectLock, noWait bool
 	cmd := &cobra.Command{
@@ -314,7 +402,7 @@ func newBucketsCreateCmd(a *app) *cobra.Command {
 starting and ending with a letter or digit, and is shared by everyone, so it
 must not be taken already. Storage is billed at 500 naira per GiB a month,
 measured hourly; data out and requests are free during the beta.`,
-		Example: "  pantech buckets create my-app-uploads\n  pantech buckets create backups --quota 100 --versioning",
+		Example: "  pantech buckets create my-app-uploads\n  pantech buckets create backups --quota 100 --versioning --encryption sse_s3",
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if quotaGiB < 0 {
@@ -327,6 +415,13 @@ measured hourly; data out and requests are free during the beta.`,
 			if quotaGiB > 0 {
 				body["quota_bytes"] = quotaGiB * gib
 			}
+			if cmd.Flags().Changed("encryption") {
+				enc, err := validateEncryption(encryption)
+				if err != nil {
+					return &usageError{err, cmd}
+				}
+				body["encryption"] = enc
+			}
 			c, err := a.client()
 			if err != nil {
 				return err
@@ -337,7 +432,13 @@ measured hourly; data out and requests are free during the beta.`,
 			var b api.Bucket
 			res, err := c.Do(ctx(cmd), api.Request{Method: http.MethodPost, Path: "/buckets", Body: body}, &b)
 			if err != nil {
-				return objectStorageError(api.AsFlags(err, map[string]string{"name": "<name>", "region": "--region", "quota_bytes": "--quota", "object_lock": "--object-lock"}))
+				return objectStorageError(api.AsFlags(err, map[string]string{
+					"name":        "<name>",
+					"region":      "--region",
+					"quota_bytes": "--quota",
+					"object_lock": "--object-lock",
+					"encryption":  "--encryption",
+				}))
 			}
 			if noWait || b.OperationID == "" {
 				if a.out.JSON {
@@ -371,18 +472,20 @@ measured hourly; data out and requests are free during the beta.`,
 	f.Int64Var(&quotaGiB, "quota", 0, "size limit in GiB (default: no limit)")
 	f.BoolVar(&versioning, "versioning", false, "keep earlier versions of objects")
 	f.BoolVar(&objectLock, "object-lock", false, "allow retention on objects (cannot be turned off later)")
+	f.StringVar(&encryption, "encryption", "", "default server-side encryption for new objects: none or sse_s3")
 	f.BoolVar(&noWait, "no-wait", false, "return the bucket id without waiting")
 	return cmd
 }
 
 func newBucketsUpdateCmd(a *app) *cobra.Command {
 	var quotaGB int64
+	var encryption string
 	var noQuota, versioning, noVersioning, clearPublicPrefixes, noWait bool
 	var publicPrefixes []string
 	cmd := &cobra.Command{
 		Use:   "update <bucket>",
-		Short: "Change a bucket's quota, versioning or public prefixes",
-		Example: `  pantech buckets update uploads --quota-gb 100 --versioning
+		Short: "Change a bucket's quota, versioning, encryption or public prefixes",
+		Example: `  pantech buckets update uploads --quota-gb 100 --versioning --encryption sse_s3
   pantech buckets update uploads --public-prefix public/ --public-prefix assets/
   pantech buckets update uploads --clear-public-prefixes`,
 		Args: cobra.ExactArgs(1),
@@ -413,6 +516,13 @@ func newBucketsUpdateCmd(a *app) *cobra.Command {
 			if noVersioning {
 				body["versioning"] = false
 			}
+			if f.Changed("encryption") {
+				enc, err := validateEncryption(encryption)
+				if err != nil {
+					return &usageError{err, cmd}
+				}
+				body["encryption"] = enc
+			}
 			if f.Changed("public-prefix") {
 				body["public_prefixes"] = publicPrefixes
 			}
@@ -420,7 +530,7 @@ func newBucketsUpdateCmd(a *app) *cobra.Command {
 				body["public_prefixes"] = []string{}
 			}
 			if len(body) == 0 {
-				return &usageError{errors.New("nothing to change: pass --quota-gb, --no-quota, --versioning, --no-versioning, --public-prefix or --clear-public-prefixes"), cmd}
+				return &usageError{errors.New("nothing to change: pass --quota-gb, --no-quota, --versioning, --no-versioning, --encryption, --public-prefix or --clear-public-prefixes"), cmd}
 			}
 			c, err := a.client()
 			if err != nil {
@@ -440,6 +550,7 @@ func newBucketsUpdateCmd(a *app) *cobra.Command {
 				return objectStorageError(api.AsFlags(err, map[string]string{
 					"quota_bytes":     "--quota-gb",
 					"versioning":      "--versioning",
+					"encryption":      "--encryption",
 					"public_prefixes": "--public-prefix",
 				}))
 			}
@@ -481,6 +592,7 @@ func newBucketsUpdateCmd(a *app) *cobra.Command {
 	f.BoolVar(&noQuota, "no-quota", false, "remove the bucket's size limit")
 	f.BoolVar(&versioning, "versioning", false, "turn versioning on")
 	f.BoolVar(&noVersioning, "no-versioning", false, "turn versioning off")
+	f.StringVar(&encryption, "encryption", "", "default server-side encryption for new objects: none or sse_s3")
 	f.StringSliceVar(&publicPrefixes, "public-prefix", nil, "public read prefix (repeatable; replaces the list)")
 	f.BoolVar(&clearPublicPrefixes, "clear-public-prefixes", false, "remove all public prefixes (make bucket wholly private)")
 	f.BoolVar(&noWait, "no-wait", false, "return without waiting for the update operation")
@@ -1160,6 +1272,66 @@ func keyBuckets(k *api.ObjectStorageKey) string {
 	return strings.Join(k.Buckets, ", ")
 }
 
+func prefixesText(prefixes []string) string {
+	if len(prefixes) == 0 {
+		return "all"
+	}
+	return strings.Join(prefixes, ", ")
+}
+
+func expiresText(t *string) string {
+	if t == nil || *t == "" {
+		return "never"
+	}
+	return output.When(t)
+}
+
+func permissionsText(perms string, readOnly bool) string {
+	switch perms {
+	case "read_only":
+		return "read only"
+	case "write_only":
+		return "write only"
+	case "read_write":
+		return "read and write"
+	default:
+		if readOnly {
+			return "read only"
+		}
+		return "read and write"
+	}
+}
+
+func validateStoragePermissions(perms string) (string, error) {
+	p := strings.ToLower(strings.TrimSpace(perms))
+	switch p {
+	case "read_write", "read_only", "write_only":
+		return p, nil
+	default:
+		return "", fmt.Errorf("--permissions must be read_write, read_only or write_only (got %q)", perms)
+	}
+}
+
+// parseExpiresIn parses a duration such as 24h, 30m, 7d or 90d.
+func parseExpiresIn(s string) (time.Duration, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0, errors.New("--expires-in must not be empty")
+	}
+	if d, ok := strings.CutSuffix(s, "d"); ok {
+		n, err := strconv.Atoi(d)
+		if err != nil || n <= 0 || n > 3650 {
+			return 0, fmt.Errorf("--expires-in days must be between 1d and 3650d (got %q)", s)
+		}
+		return time.Duration(n) * 24 * time.Hour, nil
+	}
+	dur, err := time.ParseDuration(s)
+	if err != nil || dur <= 0 || dur > 3650*24*time.Hour {
+		return 0, fmt.Errorf("--expires-in must be a positive duration such as 24h, 7d or 90d (got %q)", s)
+	}
+	return dur, nil
+}
+
 func newObjectStorageKeysListCmd(a *app) *cobra.Command {
 	return &cobra.Command{
 		Use:     "list",
@@ -1181,13 +1353,18 @@ func newObjectStorageKeysListCmd(a *app) *cobra.Command {
 			rows := make([][]string, len(keys))
 			for i := range keys {
 				k := &keys[i]
-				access := "read and write"
-				if k.ReadOnly {
-					access = "read only"
+				rows[i] = []string{
+					a.out.Dim(k.ID),
+					output.Clean(k.Name),
+					k.AccessKeyID,
+					permissionsText(k.Permissions, k.ReadOnly),
+					keyBuckets(k),
+					prefixesText(k.Prefixes),
+					expiresText(k.ExpiresAt),
+					output.Ago(&k.CreatedAt),
 				}
-				rows[i] = []string{a.out.Dim(k.ID), output.Clean(k.Name), k.AccessKeyID, access, keyBuckets(k), output.Ago(&k.CreatedAt)}
 			}
-			a.out.Table([]string{"id", "name", "access key id", "access", "buckets", "created"}, rows)
+			a.out.Table([]string{"id", "name", "access key id", "permissions", "buckets", "prefixes", "expires", "created"}, rows)
 			a.out.Summary(count(len(keys), "key"))
 			return nil
 		},
@@ -1195,9 +1372,9 @@ func newObjectStorageKeysListCmd(a *app) *cobra.Command {
 }
 
 func newObjectStorageKeysCreateCmd(a *app) *cobra.Command {
-	var name, region string
+	var name, region, permissions, expiresAt, expiresIn string
 	var readOnly bool
-	var buckets []string
+	var buckets, prefixes []string
 	cmd := &cobra.Command{
 		Use:   "create --name NAME",
 		Short: "Create an access key; prints its secret once",
@@ -1205,15 +1382,52 @@ func newObjectStorageKeysCreateCmd(a *app) *cobra.Command {
 the secret is never shown again: save it now. With --json they are the
 "access_key_id" and "secret_access_key" fields.`,
 		Example: `  pantech object-storage keys create --name app
+  pantech object-storage keys create --name uploader --permissions write_only --bucket uploads --prefix incoming/ --expires-in 30d
   pantech object-storage keys create --name backups-reader --read-only --bucket backups`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			body := map[string]any{"name": name, "read_only": readOnly}
+			f := cmd.Flags()
+			if expiresAt != "" && expiresIn != "" {
+				return &usageError{errors.New("use either --expires-at or --expires-in, not both"), cmd}
+			}
+			body := map[string]any{"name": name}
+			if f.Changed("permissions") {
+				p, err := validateStoragePermissions(permissions)
+				if err != nil {
+					return &usageError{err, cmd}
+				}
+				if readOnly && p != "read_only" {
+					return &usageError{fmt.Errorf("cannot combine --read-only with --permissions %s", p), cmd}
+				}
+				body["permissions"] = p
+				if readOnly {
+					body["read_only"] = true
+				}
+			} else {
+				body["read_only"] = readOnly
+			}
 			if region != "" {
 				body["region"] = region
 			}
 			if len(buckets) > 0 {
 				body["buckets"] = buckets
+			}
+			if len(prefixes) > 0 {
+				body["prefixes"] = prefixes
+			}
+			if expiresAt != "" {
+				t, err := time.Parse(time.RFC3339, strings.TrimSpace(expiresAt))
+				if err != nil {
+					return &usageError{fmt.Errorf("--expires-at must be an RFC 3339 timestamp (e.g. 2027-01-01T00:00:00Z): %w", err), cmd}
+				}
+				body["expires_at"] = t.UTC().Format(time.RFC3339)
+			}
+			if expiresIn != "" {
+				dur, err := parseExpiresIn(expiresIn)
+				if err != nil {
+					return &usageError{err, cmd}
+				}
+				body["expires_at"] = nowFunc().Add(dur).UTC().Truncate(time.Second).Format(time.RFC3339)
 			}
 			c, err := a.client()
 			if err != nil {
@@ -1222,7 +1436,14 @@ the secret is never shown again: save it now. With --json they are the
 			var k api.ObjectStorageKey
 			res, err := c.Do(ctx(cmd), api.Request{Method: http.MethodPost, Path: "/object-storage/keys", Body: body}, &k)
 			if err != nil {
-				return objectStorageError(api.AsFlags(err, map[string]string{"name": "--name", "region": "--region", "buckets": "--bucket"}))
+				return objectStorageError(api.AsFlags(err, map[string]string{
+					"name":        "--name",
+					"region":      "--region",
+					"permissions": "--permissions",
+					"buckets":     "--bucket",
+					"prefixes":    "--prefix",
+					"expires_at":  "--expires-at",
+				}))
 			}
 			switch {
 			case a.out.JSON:
@@ -1246,8 +1467,12 @@ the secret is never shown again: save it now. With --json they are the
 	f := cmd.Flags()
 	f.StringVar(&name, "name", "", "a name such as app (required)")
 	f.StringVar(&region, "region", "", "region, such as af-abj (default: the only one)")
-	f.BoolVar(&readOnly, "read-only", false, "may read but not write or delete")
-	f.StringSliceVar(&buckets, "bucket", nil, "only this bucket, by name; repeat for more (default: all)")
+	f.StringVar(&permissions, "permissions", "", "access level: read_write, read_only or write_only (default: read_write)")
+	f.BoolVar(&readOnly, "read-only", false, "may read but not write or delete (same as --permissions read_only)")
+	f.StringSliceVar(&buckets, "bucket", nil, "only this bucket, by bucket name (not bkt_ id); repeat for more (default: all)")
+	f.StringSliceVar(&prefixes, "prefix", nil, "only object keys starting with this prefix, e.g. uploads/; repeat for more (default: all)")
+	f.StringVar(&expiresAt, "expires-at", "", "when the key stops working, RFC 3339 timestamp (default: never)")
+	f.StringVar(&expiresIn, "expires-in", "", "key lifetime from now, e.g. 24h, 30d or 90d (default: never)")
 	_ = cmd.MarkFlagRequired("name")
 	return cmd
 }

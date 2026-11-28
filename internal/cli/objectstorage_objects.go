@@ -40,9 +40,11 @@ func newBucketsObjectsCmd(a *app) *cobra.Command {
 		newBucketObjectsDownloadCmd(a),
 		newBucketObjectsPresignDownloadCmd(a),
 		newBucketObjectsPresignUploadCmd(a),
+		newBucketObjectsUploadFormCmd(a),
 		newBucketObjectsFolderCmd(a),
 		newBucketObjectsCopyCmd(a),
 		newBucketObjectsDeleteCmd(a),
+		newBucketObjectsRestoreVersionCmd(a),
 		newBucketObjectsVisibilityCmd(a),
 		newBucketObjectsTagsCmd(a),
 		newBucketObjectsLockCmd(a),
@@ -1025,5 +1027,183 @@ func newBucketObjectsLockCmd(a *app) *cobra.Command {
 	f.StringVar(&legalHold, "legal-hold", "", "legal hold: on or off")
 	f.BoolVar(&bypassGovernance, "bypass-governance", false, "bypass governance retention when shortening it")
 	f.StringVar(&version, "version", "", "specific object version id")
+	return cmd
+}
+
+func newBucketObjectsUploadFormCmd(a *app) *cobra.Command {
+	var key, keyPrefix, contentType string
+	var minBytes, maxBytes, expiresIn int64
+	cmd := &cobra.Command{
+		Use:   "upload-form <bucket> (--key KEY | --key-prefix PREFIX)",
+		Short: "Create a signed browser upload form (HTML POST policy) for a bucket",
+		Long: `Sign an HTML form upload into a bucket so a browser can POST a file directly
+to storage without routing bytes through your server. Post every returned field
+first, then the file as a field named "file" last, as multipart/form-data to url.`,
+		Example: `  pantech buckets objects upload-form uploads --key avatars/u1.png --content-type image/png --max-bytes 5242880
+  pantech buckets objects upload-form uploads --key-prefix incoming/ --min-bytes 1 --max-bytes 10485760 --expires-in 900`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			f := cmd.Flags()
+			if (key == "") == (keyPrefix == "") {
+				return &usageError{errors.New("pass exactly one of --key or --key-prefix"), cmd}
+			}
+			if f.Changed("min-bytes") && minBytes < 0 {
+				return &usageError{errors.New("--min-bytes must be 0 or more"), cmd}
+			}
+			if f.Changed("max-bytes") && (maxBytes < 1 || maxBytes > 5*gib) {
+				return &usageError{errors.New("--max-bytes must be between 1 and 5368709120 (5 GiB)"), cmd}
+			}
+			if f.Changed("min-bytes") && f.Changed("max-bytes") && minBytes > maxBytes {
+				return &usageError{errors.New("--min-bytes cannot exceed --max-bytes"), cmd}
+			}
+			if f.Changed("expires-in") && (expiresIn < 60 || expiresIn > 604800) {
+				return &usageError{errors.New("--expires-in must be between 60 and 604800 seconds"), cmd}
+			}
+			body := map[string]any{}
+			if key != "" {
+				body["key"] = key
+			}
+			if keyPrefix != "" {
+				body["key_prefix"] = keyPrefix
+			}
+			if f.Changed("min-bytes") {
+				body["min_bytes"] = minBytes
+			}
+			if f.Changed("max-bytes") {
+				body["max_bytes"] = maxBytes
+			}
+			if contentType != "" {
+				body["content_type"] = contentType
+			}
+			if f.Changed("expires-in") {
+				body["expires_in_seconds"] = expiresIn
+			}
+			c, err := a.client()
+			if err != nil {
+				return err
+			}
+			id, err := bucketID(cmd, c, args[0])
+			if err != nil {
+				return err
+			}
+			var out api.BucketUploadForm
+			res, err := c.Do(ctx(cmd), api.Request{
+				Method: http.MethodPost,
+				Path:   "/buckets/" + url.PathEscape(id) + "/objects/upload-form",
+				Body:   body,
+			}, &out)
+			if err != nil {
+				return objectStorageError(api.AsFlags(err, map[string]string{
+					"key":                "--key",
+					"key_prefix":         "--key-prefix",
+					"min_bytes":          "--min-bytes",
+					"max_bytes":          "--max-bytes",
+					"content_type":       "--content-type",
+					"expires_in_seconds": "--expires-in",
+				}))
+			}
+			switch {
+			case a.out.JSON:
+				a.out.RawJSON(res.Body)
+			case a.out.Quiet:
+				a.out.Line("%s", out.URL)
+			default:
+				sections := [][]output.Pair{{
+					{"URL", out.URL},
+					{"Bucket", output.Or(&out.BucketName)},
+					{"Expires", output.When(&out.ExpiresAt)},
+				}}
+				if len(out.Fields) > 0 {
+					names := make([]string, 0, len(out.Fields))
+					for k := range out.Fields {
+						names = append(names, k)
+					}
+					sort.Strings(names)
+					pairs := make([]output.Pair, 0, len(names))
+					for _, k := range names {
+						pairs = append(pairs, output.Pair{k, out.Fields[k]})
+					}
+					sections = append(sections, pairs)
+				}
+				a.out.Print(output.Detail{
+					Title:    "Browser upload form",
+					Subtitle: args[0],
+					Sections: sections,
+				})
+				a.out.Note("POST every field above as multipart/form-data, followed by the file as \"file\" last.")
+			}
+			return nil
+		},
+	}
+	f := cmd.Flags()
+	f.StringVar(&key, "key", "", "exact object key the form may upload")
+	f.StringVar(&keyPrefix, "key-prefix", "", "key prefix the form may upload under (browser filename replaces ${filename})")
+	f.Int64Var(&minBytes, "min-bytes", 0, "smallest accepted file size in bytes")
+	f.Int64Var(&maxBytes, "max-bytes", 0, "largest accepted file size in bytes (up to 5 GiB)")
+	f.StringVar(&contentType, "content-type", "", "exact Content-Type the upload must send")
+	f.Int64Var(&expiresIn, "expires-in", 0, "form lifetime in seconds (60 to 604800)")
+	return cmd
+}
+
+func newBucketObjectsRestoreVersionCmd(a *app) *cobra.Command {
+	var versionID string
+	cmd := &cobra.Command{
+		Use:   "restore-version <bucket> <key>",
+		Short: "Restore an earlier object version or remove a delete marker",
+		Long: `Restore a previous version of an object as the current latest version, or
+omit --version-id to remove the latest delete marker and undelete a soft-deleted
+versioned object.`,
+		Example: `  pantech buckets objects restore-version uploads report.pdf
+  pantech buckets objects restore-version uploads report.pdf --version-id v1`,
+		Args: cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := a.client()
+			if err != nil {
+				return err
+			}
+			id, err := bucketID(cmd, c, args[0])
+			if err != nil {
+				return err
+			}
+			body := map[string]any{"key": args[1]}
+			if versionID != "" {
+				body["version_id"] = versionID
+			}
+			var out api.RestoreObjectVersionResult
+			res, err := c.Do(ctx(cmd), api.Request{
+				Method: http.MethodPost,
+				Path:   "/buckets/" + url.PathEscape(id) + "/objects/restore-version",
+				Body:   body,
+			}, &out)
+			if err != nil {
+				return objectStorageError(api.AsFlags(err, map[string]string{"version_id": "--version-id"}))
+			}
+			switch {
+			case a.out.JSON:
+				a.out.RawJSON(res.Body)
+			case a.out.Quiet:
+				v := out.VersionID
+				if v == "" {
+					v = out.RestoredVersionID
+				}
+				if v == "" {
+					v = out.Key
+				}
+				a.out.Line("%s", v)
+			default:
+				if out.Action == "removed_delete_marker" {
+					if out.RestoredVersionID != "" {
+						a.out.Success("Removed delete marker for %s in %s (restored version %s).", out.Key, args[0], out.RestoredVersionID)
+					} else {
+						a.out.Success("Removed delete marker for %s in %s.", out.Key, args[0])
+					}
+				} else {
+					a.out.Success("Restored %s in %s as version %s.", out.Key, args[0], out.VersionID)
+				}
+			}
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&versionID, "version-id", "", "version id to restore (omit to remove the latest delete marker)")
 	return cmd
 }

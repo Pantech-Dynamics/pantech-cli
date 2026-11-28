@@ -9,6 +9,12 @@ release workflow refuses a tag that has no section here.
 
 ## Unreleased
 
+### Changed
+
+- `pantech vm private-network detach` now hints to turn off dynamic IP first
+  (`pantech vm dynamic-ip off <vm>`) when the API refuses with
+  `INSTANCE_HAS_DYNAMIC_IP`.
+
 ## v0.11.0 — 2026-11-28
 
 ### Added

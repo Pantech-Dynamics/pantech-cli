@@ -467,6 +467,8 @@ func dynamicIPError(cmd *cobra.Command, c *api.Client, vmID, ref string, err err
 		return &hinted{err: err, hint: "The 24-hour on-demand rotation limit has been reached. Wait for an earlier rotation to age out or let the next scheduled rotation run."}
 	case api.IsCode(err, "ADDRESS_ROTATION_NEEDS_SECURITY_GROUP"):
 		return &hinted{err: err, hint: "Choose a security group that allows nothing from the private network's range.\nSee: pantech security-groups list"}
+	case api.IsCode(err, "INSTANCE_HAS_DYNAMIC_IP"):
+		return &hinted{err: err, hint: fmt.Sprintf("Turn off dynamic IP on %s first, then try again:\n  pantech vm dynamic-ip off %s", ref, ref)}
 	case api.IsCode(err, "SECURITY_GROUP_ALLOWS_PRIVATE_NETWORK"):
 		if vmID != "" {
 			return privateNetworkHint(cmd, c, vmID, err)

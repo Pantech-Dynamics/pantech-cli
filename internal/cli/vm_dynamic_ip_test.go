@@ -442,6 +442,14 @@ func TestVMDynamicIPErrorHints(t *testing.T) {
 			args:     []string{"vm", "dynamic-ip", "set", "vm_1", "--schedule", "weekly", "--yes"},
 			wantHint: "pantech security-groups rules remove sg_locked",
 		},
+		{
+			name:     "private-network detach refused while dynamic IP is on hints turning it off",
+			route:    "DELETE /instances/vm_1/private-network",
+			status:   409,
+			code:     "INSTANCE_HAS_DYNAMIC_IP",
+			args:     []string{"vm", "private-network", "detach", "vm_1", "--yes"},
+			wantHint: "pantech vm dynamic-ip off vm_1",
+		},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			f, srv := newFakeAPI(t)
@@ -456,6 +464,28 @@ func TestVMDynamicIPErrorHints(t *testing.T) {
 				t.Fatalf("err = %q, want hint %q", r.err.Error(), c.wantHint)
 			}
 		})
+	}
+}
+
+func TestVMPrivateNetworkDetachRefusedByDynamicIP(t *testing.T) {
+	f, srv := newFakeAPI(t)
+	vmListForDynamicIP(f)
+	msg := "This instance has a dynamic IP on. Turn it off first."
+	f.on("DELETE /instances/vm_1/private-network", 409, `{"type":"about:blank","title":"Instance has a dynamic IP","status":409,"code":"INSTANCE_HAS_DYNAMIC_IP","detail":"`+msg+`","request_id":"req_dip_409"}`)
+
+	r := run(t, srv, "", "vm", "private-network", "detach", "web-1", "--yes")
+	var p *api.Problem
+	if !errors.As(r.err, &p) || p.Code != "INSTANCE_HAS_DYNAMIC_IP" {
+		t.Fatalf("err = %v, want *api.Problem with INSTANCE_HAS_DYNAMIC_IP", r.err)
+	}
+	for _, want := range []string{msg, "(INSTANCE_HAS_DYNAMIC_IP, request req_dip_409)", "pantech vm dynamic-ip off web-1"} {
+		if !strings.Contains(r.err.Error(), want) {
+			t.Fatalf("err = %q, lacks %q", r.err.Error(), want)
+		}
+	}
+	calls := f.sent("DELETE", "/instances/vm_1/private-network")
+	if len(calls) != 1 || calls[0].IdempotencyKey == "" {
+		t.Fatalf("DELETE calls = %+v, want 1 with Idempotency-Key", calls)
 	}
 }
 
